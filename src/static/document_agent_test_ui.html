@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Musya Agent — Document Agents Test UI</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    body { font-family: 'IBM Plex Sans Thai', sans-serif; }
+    /* Shared Utilities Styles */
+    .prose h2 { font-size:1.15rem; font-weight:600; margin-top:1rem; margin-bottom:0.4rem; }
+    .prose h3 { font-size:1.05rem; font-weight:600; margin-top:0.8rem; margin-bottom:0.3rem; }
+    .prose p { margin-bottom: 0.5rem; }
+    /* Loading animation */
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+    .loading-dots span { animation: pulse 1.4s infinite; }
+    .loading-dots span:nth-child(2) { animation-delay:0.2s; }
+    .loading-dots span:nth-child(3) { animation-delay:0.4s; }
+    
+    /* SQL Code block */
+    pre.sql-code { font-family: monospace; white-space: pre-wrap; font-size: 0.85rem;}
+    
+    /* Hide panels by default */
+    .tab-panel.hidden { display: none; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen text-gray-800">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-50 bg-white border-b border-gray-200 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex justify-between items-center h-16">
+        <div class="flex items-center">
+          <div class="flex-shrink-0 bg-gradient-to-br from-indigo-500 to-purple-600 w-8 h-8 rounded flex items-center justify-center text-white font-bold text-lg">M</div>
+          <div class="ml-3">
+            <h1 class="text-lg font-bold text-gray-900 leading-tight">Musya Agent — Document Agents</h1>
+            <div class="text-xs text-gray-500">Shared Foundation (Agents 1-4) Test Interface</div>
+          </div>
+        </div>
+        <div class="flex items-center">
+          <div id="health-badge" class="px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+            Checking Health...
+          </div>
+        </div>
+      </div>
+      
+      <!-- Tabs Navigation -->
+      <nav class="flex overflow-x-auto" aria-label="Tabs" id="tabs-nav">
+        <button onclick="switchTab('rag')" class="tab-btn active border-indigo-500 text-indigo-600 whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm transition-colors" data-tab="rag">
+          RAG Search
+        </button>
+        <button onclick="switchTab('indicators')" class="tab-btn border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm transition-colors" data-tab="indicators">
+          Indicators
+        </button>
+        <button onclick="switchTab('sql')" class="tab-btn border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm transition-colors" data-tab="sql">
+          SQL Playground
+        </button>
+        <button onclick="switchTab('library')" class="tab-btn border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm transition-colors" data-tab="library">
+          Document Library
+        </button>
+        <button onclick="switchTab('upload')" class="tab-btn border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm transition-colors" data-tab="upload">
+          Upload
+        </button>
+        <button onclick="switchTab('evidence')" class="tab-btn border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-3 px-4 border-b-2 font-medium text-sm transition-colors" data-tab="evidence">
+          Evidence & Citations
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+  
+    <!-- Tab: RAG Search -->
+    <div id="panel-rag" class="tab-panel space-y-6">
+      <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="bg-indigo-50 border-b border-indigo-100 px-6 py-4">
+          <h2 class="text-indigo-800 font-semibold text-lg flex items-center">
+            <span class="mr-2">🔍</span> RAG Search (search_documents)
+          </h2>
+          <p class="text-indigo-600 text-sm mt-1">Test vector search via pgvector for document chunks.</p>
+        </div>
+        
+        <div class="p-6">
+          <div class="flex flex-col md:flex-row gap-4 mb-6">
+            <div class="flex-1">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Keywords</label>
+              <input type="text" id="rag-keywords" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g. อุบัติเหตุทางถนน ปัจจัยเสี่ยง">
+            </div>
+            <div class="w-full md:w-48">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Topic</label>
+              <select id="rag-topic" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 bg-white">
+                <option value="all">All Topics</option>
+                <option value="accident">Accident</option>
+                <option value="mental_health">Mental Health</option>
+                <option value="nutrition">Nutrition</option>
+              </select>
+            </div>
+             <div class="w-full md:w-32">
+              <label class="block text-sm font-medium text-gray-700 mb-1">Results (n)</label>
+              <input type="number" id="rag-n" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500" value="5" min="1" max="20">
+            </div>
+            <div class="flex items-end">
+              <button onclick="TabRAG.search()" class="w-full md:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-6 rounded-md transition-colors shadow-sm">
+                Search
+              </button>
+            </div>
+          </div>
+          
+          <div class="mb-6 flex flex-wrap gap-2">
+            <span class="text-sm text-gray-500">Quick queries:</span>
+            <button onclick="document.getElementById('rag-keywords').value='อุบัติเหตุ ปัจจัยเสี่ยง'; document.getElementById('rag-topic').value='accident'; TabRAG.search();" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors">อุบัติเหตุ ปัจจัยเสี่ยง (accident)</button>
+            <button onclick="document.getElementById('rag-keywords').value='สุขภาพจิต ผู้สูงอายุ'; document.getElementById('rag-topic').value='mental_health'; TabRAG.search();" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors">สุขภาพจิต ผู้สูงอายุ (mental_health)</button>
+            <button onclick="document.getElementById('rag-keywords').value='โภชนาการ เด็ก'; document.getElementById('rag-topic').value='nutrition'; TabRAG.search();" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors">โภชนาการ เด็ก (nutrition)</button>
+            <button onclick="document.getElementById('rag-keywords').value='แผนปฏิบัติการ ความปลอดภัยทางถนน'; document.getElementById('rag-topic').value='all'; TabRAG.search();" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded-full transition-colors">แผนปฏิบัติการ (all)</button>
+          </div>
+
+          <div id="rag-loading" class="hidden text-center py-10">
+            <div class="text-indigo-600 text-2xl loading-dots"><span>.</span><span>.</span><span>.</span></div>
+            <p class="text-sm text-gray-500 mt-2">Searching documents...</p>
+          </div>
+
+          <div id="rag-results" class="space-y-4">
+             <!-- Results will be injected here -->
+             <div class="text-center py-10 text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">
+                Enter keywords and click search to see RAG results.
+             </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Indicators -->
+    <div id="panel-indicators" class="tab-panel hidden space-y-6">
+      <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div class="bg-teal-50 border-b border-teal-100 px-6 py-4">
+          <h2 class="text-teal-800 font-semibold text-lg flex items-center">
+            <span class="mr-2">📊</span> Indicator Catalog (get_indicator_catalog)
+          </h2>
+          <p class="text-teal-600 text-sm mt-1">Browse predefined health indicators by topic.</p>
+        </div>
+        
+        <div class="p-6">
+           <div class="flex flex-wrap gap-2 mb-6" id="indicator-topic-btns">
+              <button onclick="TabIndicators.load('accident')" class="topic-btn-ind active bg-teal-100 text-teal-800 border-teal-300 border px-4 py-2 rounded-md font-medium text-sm transition-colors">Accident</button>
+              <button onclick="TabIndicators.load('mental_health')" class="topic-btn-ind bg-gray-100 text-gray-700 border-gray-200 border px-4 py-2 rounded-md font-medium text-sm hover:bg-gray-200 transition-colors">Mental Health</button>
+              <button onclick="TabIndicators.load('nutrition')" class="topic-btn-ind bg-gray-100 text-gray-700 border-gray-200 border px-4 py-2 rounded-md font-medium text-sm hover:bg-gray-200 transition-colors">Nutrition</button>
+           </div>
+           
+           <div id="indicators-loading" class="hidden text-center py-10">
+            <div class="text-teal-600 text-2xl loading-dots"><span>.</span><span>.</span><span>.</span></div>
+          </div>
+
+           <div id="indicators-container">
+             <!-- Table injected here -->
+           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: SQL Playground -->
+    <div id="panel-sql" class="tab-panel hidden space-y-6">
+       <div class="flex flex-col lg:flex-row gap-6">
+         <!-- Left: Query Editor -->
+         <div class="lg:w-2/3 space-y-6">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col">
+              <div class="bg-amber-50 border-b border-amber-100 px-6 py-4 flex justify-between items-center">
+                <div>
+                  <h2 class="text-amber-800 font-semibold text-lg flex items-center">
+                    <span class="mr-2">⚡</span> SQL Playground (execute_custom_sql)
+                  </h2>
+                  <p class="text-amber-600 text-sm mt-1">Read-only SQL execution (SELECT/WITH only).</p>
+                </div>
+                <button onclick="TabSQL.execute()" class="bg-amber-600 hover:bg-amber-700 text-white font-medium py-2 px-6 rounded-md transition-colors shadow-sm">
+                  Execute
+                </button>
+              </div>
+              <div class="p-0 border-b border-gray-200 relative">
+                 <textarea id="sql-input" class="w-full h-40 p-4 font-mono text-sm bg-gray-900 text-gray-100 focus:outline-none resize-y" spellcheck="false">SELECT COUNT(*) FROM mart_accident_summary;</textarea>
+              </div>
+              <div class="p-4 bg-gray-50 flex flex-wrap gap-2">
+                <span class="text-sm text-gray-500 flex items-center mr-2">Quick queries:</span>
+                <button onclick="document.getElementById('sql-input').value='SELECT COUNT(*) FROM mart_accident_summary;'; TabSQL.execute();" class="text-xs bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 px-2 py-1 rounded transition-colors">Count Summary</button>
+                <button onclick="document.getElementById('sql-input').value='SELECT * FROM document_registry LIMIT 10;'; TabSQL.execute();" class="text-xs bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 px-2 py-1 rounded transition-colors">Docs limit 10</button>
+                <button onclick="document.getElementById('sql-input').value='SELECT * FROM indicator_catalog WHERE topic = \'accident\';'; TabSQL.execute();" class="text-xs bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 px-2 py-1 rounded transition-colors">Indicators</button>
+                <button onclick="document.getElementById('sql-input').value='SELECT source, COUNT(*) as chunks FROM document_embeddings GROUP BY source ORDER BY chunks DESC LIMIT 15;'; TabSQL.execute();" class="text-xs bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 px-2 py-1 rounded transition-colors">Chunks per doc</button>
+                <button onclick="document.getElementById('sql-input').value='SELECT * FROM evidence_registry ORDER BY created_at DESC LIMIT 10;'; TabSQL.execute();" class="text-xs bg-white border border-gray-300 hover:bg-gray-100 text-gray-700 px-2 py-1 rounded transition-colors">Recent Evidence</button>
+              </div>
+            </div>
+
+            <!-- Results Panel -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+               <div class="px-6 py-3 border-b border-gray-200 flex justify-between items-center bg-gray-50">
+                  <h3 class="font-semibold text-gray-700">Results <span id="sql-row-count" class="ml-2 text-xs font-normal text-gray-500"></span></h3>
+                  <div class="flex items-center space-x-2">
+                    <label class="text-xs text-gray-500">Show JSON</label>
+                    <input type="checkbox" id="sql-json-toggle" onchange="TabSQL.toggleJson()" class="rounded text-amber-600 focus:ring-amber-500">
+                  </div>
+               </div>
+               
+               <div id="sql-loading" class="hidden text-center py-8">
+                  <div class="text-amber-600 text-2xl loading-dots"><span>.</span><span>.</span><span>.</span></div>
+               </div>
+               
+               <div id="sql-error" class="hidden p-4 bg-red-50 text-red-700 text-sm border-b border-red-100 font-mono whitespace-pre-wrap"></div>
+
+               <div id="sql-results-container" class="overflow-x-auto max-h-96">
+                 <!-- Table injected here -->
+                 <div class="text-center py-10 text-gray-400">Run a query to see results.</div>
+               </div>
+               <div id="sql-json-container" class="hidden p-4 bg-gray-900 text-green-400 font-mono text-xs overflow-x-auto max-h-96 whitespace-pre-wrap"></div>
+            </div>
+         </div>
+         
+         <!-- Right: Schema Inspector -->
+         <div class="lg:w-1/3">
+            <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden sticky top-20">
+               <div class="px-4 py-3 border-b border-gray-200 bg-gray-50">
+                 <h3 class="font-semibold text-gray-700 flex items-center">
+                   <span class="mr-2">📚</span> Schema Inspector
+                 </h3>
+               </div>
+               <div class="p-4 space-y-4">
+                 <div>
+                   <label class="block text-xs font-medium text-gray-500 mb-1">Select Table</label>
+                   <div class="flex space-x-2">
+                     <select id="schema-table-select" class="flex-1 text-sm border border-gray-300 rounded px-2 py-1.5 focus:ring-amber-500 focus:border-amber-500 bg-white">
+                        <option value="mart_accident_summary">mart_accident_summary</option>
+                        <option value="mart_accident_hotspot">mart_accident_hotspot</option>
+                        <option value="mart_province_year">mart_province_year</option>
+                        <option value="dim_geography">dim_geography</option>
+                        <option value="document_registry">document_registry</option>
+                        <option value="document_embeddings">document_embeddings</option>
+                        <option value="evidence_registry">evidence_registry</option>
+                        <option value="claim_evidence_link">claim_evidence_link</option>
+                        <option value="indicator_catalog">indicator_catalog</option>
+                     </select>
+                     <button onclick="TabSQL.describeTable()" class="bg-gray-100 hover:bg-gray-200 border border-gray-300 text-gray-700 text-sm px-3 py-1.5 rounded transition-colors">Describe</button>
+                   </div>
+                 </div>
+                 
+                 <div id="schema-loading" class="hidden text-center py-4">
+                    <span class="text-gray-400 text-sm">Loading...</span>
+                 </div>
+                 
+                 <div id="schema-results" class="overflow-y-auto max-h-[500px] border border-gray-200 rounded text-sm hidden">
+                   <!-- Schema table injected here -->
+                 </div>
+               </div>
+            </div>
+         </div>
+       </div>
+    </div>
+
+    <!-- Tab: Document Library -->
+    <div id="panel-library" class="tab-panel hidden space-y-6">
+      <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+         <div class="bg-purple-50 border-b border-purple-100 px-6 py-4 flex justify-between items-center">
+          <div>
+            <h2 class="text-purple-800 font-semibold text-lg flex items-center">
+              <span class="mr-2">📁</span> Document Library
+            </h2>
+            <p class="text-purple-600 text-sm mt-1">Manage documents in document_registry and their embeddings.</p>
+          </div>
+        </div>
+        
+        <div class="p-4 border-b border-gray-200 bg-gray-50 flex flex-wrap gap-4 items-end">
+           <div class="w-full sm:w-48">
+              <label class="block text-xs font-medium text-gray-500 mb-1">Topic</label>
+              <select id="lib-topic" class="w-full text-sm border border-gray-300 rounded px-3 py-2 bg-white focus:ring-purple-500 focus:border-purple-500">
+                 <option value="">All Topics</option>
+                 <option value="accident">Accident</option>
+                 <option value="mental_health">Mental Health</option>
+                 <option value="nutrition">Nutrition</option>
+                 <option value="general">General</option>
+              </select>
+           </div>
+           <div class="w-full sm:w-48">
+              <label class="block text-xs font-medium text-gray-500 mb-1">Status</label>
+              <select id="lib-status" class="w-full text-sm border border-gray-300 rounded px-3 py-2 bg-white focus:ring-purple-500 focus:border-purple-500">
+                 <option value="">All Statuses</option>
+                 <option value="completed">Completed</option>
+                 <option value="pending">Pending</option>
+                 <option value="processing">Processing</option>
+                 <option value="failed">Failed</option>
+              </select>
+           </div>
+           <div class="w-full sm:w-64 flex-1">
+              <label class="block text-xs font-medium text-gray-500 mb-1">Search</label>
+              <input type="text" id="lib-search" placeholder="Title or filename..." class="w-full text-sm border border-gray-300 rounded px-3 py-2 focus:ring-purple-500 focus:border-purple-500">
+           </div>
+           <button onclick="TabLibrary.load(1)" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2 rounded text-sm font-medium transition-colors shadow-sm">
+              Filter
+           </button>
+        </div>
+        
+        <div class="relative min-h-[300px]">
+           <div id="lib-loading" class="absolute inset-0 bg-white/80 z-10 flex items-center justify-center hidden">
+              <div class="text-purple-600 text-3xl loading-dots"><span>.</span><span>.</span><span>.</span></div>
+           </div>
+           
+           <div class="overflow-x-auto">
+             <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Document</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Topic</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Chunks/Pages</th>
+                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Uploaded</th>
+                  </tr>
+                </thead>
+                <tbody id="lib-tbody" class="bg-white divide-y divide-gray-200">
+                  <!-- Rows injected here -->
+                  <tr><td colspan="6" class="px-6 py-10 text-center text-gray-400">Loading documents...</td></tr>
+                </tbody>
+             </table>
+           </div>
+        </div>
+        
+        <div class="bg-gray-50 px-6 py-3 border-t border-gray-200 flex items-center justify-between">
+           <div class="text-sm text-gray-500" id="lib-pagination-info">Showing 0 of 0</div>
+           <div class="flex space-x-2">
+              <button onclick="TabLibrary.prevPage()" id="lib-btn-prev" class="px-3 py-1 border border-gray-300 rounded text-sm bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">Previous</button>
+              <button onclick="TabLibrary.nextPage()" id="lib-btn-next" class="px-3 py-1 border border-gray-300 rounded text-sm bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
+           </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Tab: Upload -->
+    <div id="panel-upload" class="tab-panel hidden space-y-6">
+       <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+         <div class="bg-green-50 border-b border-green-100 px-6 py-4">
+            <h2 class="text-green-800 font-semibold text-lg flex items-center">
+              <span class="mr-2">📤</span> Upload & Ingest
+            </h2>
+            <p class="text-green-600 text-sm mt-1">Upload document → AI analyzes APA → Edit → Ingest to pgvector.</p>
+         </div>
+         
+         <div class="p-6 flex flex-col md:flex-row gap-8">
+            <!-- Left: Dropzone -->
+            <div class="w-full md:w-1/2 flex flex-col space-y-4">
+               <div id="upload-dropzone" class="border-2 border-dashed border-gray-300 rounded-xl p-10 flex flex-col items-center justify-center text-center hover:border-green-500 hover:bg-green-50 transition-colors cursor-pointer bg-gray-50 min-h-[250px]">
+                  <div class="text-4xl mb-3">📄</div>
+                  <p class="text-gray-700 font-medium mb-1">Click or drag file to upload</p>
+                  <p class="text-xs text-gray-500">Supported: PDF, DOCX, TXT, MD (Max 50MB)</p>
+                  <input type="file" id="upload-file-input" class="hidden" accept=".pdf,.docx,.txt,.md">
+               </div>
+               
+               <div id="upload-file-info" class="hidden p-4 bg-green-50 rounded-lg border border-green-200 flex items-center justify-between">
+                  <div class="flex items-center overflow-hidden">
+                     <span class="text-2xl mr-3">📄</span>
+                     <div class="truncate">
+                        <p id="upload-filename" class="text-sm font-medium text-green-900 truncate">filename.pdf</p>
+                        <p id="upload-filesize" class="text-xs text-green-700">2.5 MB</p>
+                     </div>
+                  </div>
+                  <button onclick="TabUpload.reset()" class="text-gray-400 hover:text-red-500 p-1"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+               </div>
+               
+               <!-- AI Analysis State -->
+               <div id="upload-analyze-loading" class="hidden text-center py-8">
+                  <div class="text-green-600 text-xl loading-dots"><span>.</span><span>.</span><span>.</span></div>
+                  <p class="text-sm text-gray-500 mt-2">AI is extracting APA metadata...</p>
+               </div>
+               
+               <div id="upload-analyze-error" class="hidden p-4 bg-red-50 text-red-700 text-sm border border-red-200 rounded-lg whitespace-pre-wrap"></div>
+            </div>
+            
+            <!-- Right: Metadata Form -->
+            <div class="w-full md:w-1/2 flex flex-col h-full">
+               <div id="upload-form-overlay" class="absolute inset-0 bg-white/60 z-10 hidden"></div>
+               <div class="bg-gray-50 p-5 rounded-xl border border-gray-200 flex-1 flex flex-col" id="upload-form-container">
+                  <h3 class="font-medium text-gray-800 mb-4 flex justify-between items-center">
+                     Document Metadata
+                     <span id="upload-ai-badge" class="hidden text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded border border-purple-200">✨ AI Drafted</span>
+                  </h3>
+                  
+                  <form id="upload-form" class="space-y-4 flex-1 overflow-y-auto pr-2" onsubmit="event.preventDefault(); TabUpload.upload();">
+                     <div>
+                        <label class="block text-xs font-medium text-gray-700 mb-1">Title *</label>
+                        <input type="text" id="up-title" required class="w-full text-sm px-3 py-2 border border-gray-300 rounded focus:ring-green-500 focus:border-green-500">
+                     </div>
+                     <div class="grid grid-cols-2 gap-4">
+                        <div>
+                           <label class="block text-xs font-medium text-gray-700 mb-1">Topic</label>
+                           <select id="up-topic" class="w-full text-sm px-3 py-2 border border-gray-300 rounded focus:ring-green-500 focus:border-green-500 bg-white">
+                              <option value="accident">accident</option>
+                              <option value="mental_health">mental_health</option>
+                              <option value="nutrition">nutrition</option>
+                              <option value="general">general</option>
+                           </select>
+                        </div>
+                        <div>
+                           <label class="block text-xs font-medium text-gray-700 mb-1">APA Type</label>
+                           <select id="up-apa_type" class="w-full text-sm px-3 py-2 border border-gray-300 rounded focus:ring-green-500 focus:border-green-500 bg-white">
+                              <option value="report">report (รายงาน)</option>
+                              <option value="book">book (หนังสือ)</option>
+                              <option value="article">article (บทความ)</option>
+                              <option value="website">website (เว็บไซต์)</option>
+                              <option value="law">law (กฎหมาย)</option>
+                           </select>
+                        </div>
+                     </div>
+                     
+                     <div class="border-t border-gray-200 pt-3 mt-1">
+                        <p class="text-xs font-semibold text-gray-500 mb-3 uppercase tracking-wider">APA 7th Reference Data</p>
+                        <div class="space-y-3">
+                           <div>
+                              <label class="block text-xs font-medium text-gray-700 mb-1">Authors (ผู้แต่ง)</label>
+                              <input type="text" id="up-apa_authors" class="w-full text-sm px-3 py-2 border border-gray-300 rounded focus:ring-green-500 focus:border-green-500">
+                           </div>
+                           <div class="grid grid-cols-2 gap-4">
+                              <div>
+                                 <label class="block text-xs font-medium text-gray-700 mb-1">Year (ปี พ.ศ.)</label>
+                                 <input type="text" id="up-apa_year" class="w-full text-sm px-3 py-2 border border-gray-300 rounded focus:ring-green-500 focus:border-green-500">
+                              </div>
+                              <div>
+                                 <label class="block text-xs font-medium text-gray-700 mb-1">Publisher (สำนักพิมพ์/หน่วยงาน)</label>
+                                 <input type="text" id="up-apa_publisher" class="w-full text-sm px-3 py-2 border border-gray-300 rounded focus:ring-green-500 focus:border-green-500">
+                              </div>
+                           </div>
+                           <div class="grid grid-cols-2 gap-4">
+                              <div>
+                                 <label class="block text-xs font-medium text-gray-700 mb-1">External URL (ถ้ามี)</label>
+                                 <input type="url" id="up-external_url" class="w-full text-sm px-3 py-2 border border-gray-300 rounded focus:ring-green-500 focus:border-green-500">
+                              </div>
+                              <div>
+                                 <label class="block text-xs font-medium text-gray-700 mb-1">DOI (ถ้ามี)</label>
+                                 <input type="text" id="up-apa_doi" class="w-full text-sm px-3 py-2 border border-gray-300 rounded focus:ring-green-500 focus:border-green-500">
+                              </div>
+                           </div>
+                        </div>
+                     </div>
+                     
+                     <div class="pt-4 pb-1">
+                        <button type="submit" id="up-submit-btn" disabled class="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-medium py-2.5 px-4 rounded-lg transition-colors shadow-sm flex items-center justify-center">
+                           <span id="up-submit-text">Upload & Ingest to pgvector</span>
+                           <div id="up-submit-spinner" class="hidden ml-2 w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        </button>
+                     </div>
+                  </form>
+               </div>
+            </div>
+         </div>
+         
+         <!-- Success Banner -->
+         <div id="upload-success" class="hidden mx-6 mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+            <h3 class="text-green-800 font-medium flex items-center"><span class="mr-2">✅</span> Upload & Ingestion Successful</h3>
+            <div class="mt-2 text-sm text-green-700 grid grid-cols-2 gap-2" id="upload-success-details">
+               <!-- Injected -->
+            </div>
+         </div>
+       </div>
+    </div>
+
+    <!-- Tab: Evidence & Citations -->
+    <div id="panel-evidence" class="tab-panel hidden space-y-6">
+       <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+         <div class="bg-rose-50 border-b border-rose-100 px-6 py-4">
+            <h2 class="text-rose-800 font-semibold text-lg flex items-center">
+              <span class="mr-2">🔖</span> Evidence & Citations (Agent 4)
+            </h2>
+            <p class="text-rose-600 text-sm mt-1">Inspect evidence normalized and citations generated for a chat session.</p>
+         </div>
+         
+         <div class="p-6">
+            <div class="flex flex-col md:flex-row gap-4 mb-8">
+               <div class="flex-1 max-w-lg">
+                  <label class="block text-sm font-medium text-gray-700 mb-1">Session ID</label>
+                  <div class="flex">
+                     <input type="text" id="ev-session-id" class="flex-1 text-sm px-3 py-2 border border-gray-300 rounded-l-md focus:ring-rose-500 focus:border-rose-500" placeholder="e.g. session-12345">
+                     <button onclick="TabEvidence.load()" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-r-md text-sm font-medium transition-colors">Load</button>
+                  </div>
+                  <p class="text-xs text-gray-500 mt-1">Found in chat URL or database (chat_sessions.id)</p>
+               </div>
+            </div>
+            
+            <div id="ev-loading" class="hidden text-center py-12">
+               <div class="text-rose-600 text-2xl loading-dots"><span>.</span><span>.</span><span>.</span></div>
+               <p class="text-sm text-gray-500 mt-2">Loading session evidence...</p>
+            </div>
+            
+            <div id="ev-empty" class="hidden text-center py-12 border-2 border-dashed border-gray-200 rounded-lg">
+               <div class="text-4xl mb-2">📭</div>
+               <p class="text-gray-500 font-medium">No evidence found for this session ID.</p>
+            </div>
+            
+            <div id="ev-content" class="hidden space-y-8">
+               
+               <!-- Coverage Report -->
+               <div class="bg-gray-50 rounded-lg border border-gray-200 p-5">
+                  <h3 class="font-medium text-gray-800 mb-3 flex items-center"><span class="mr-2">🛡️</span> Coverage Report</h3>
+                  <div id="ev-coverage-stats" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                     <!-- Injected -->
+                  </div>
+                  <div class="w-full bg-gray-200 rounded-full h-2.5 mb-1 overflow-hidden flex" id="ev-coverage-bar">
+                     <!-- Injected -->
+                  </div>
+                  <p class="text-xs text-gray-500 text-right mb-4" id="ev-coverage-text">0% Supported</p>
+                  
+                  <div class="max-h-48 overflow-y-auto text-sm" id="ev-claims-list">
+                     <!-- Injected -->
+                  </div>
+               </div>
+               
+               <!-- APA Citations -->
+               <div>
+                  <h3 class="font-medium text-gray-800 mb-3 flex items-center border-b border-gray-200 pb-2"><span class="mr-2">📚</span> APA Reference List</h3>
+                  <div id="ev-citations-list" class="space-y-4">
+                     <!-- Injected -->
+                  </div>
+               </div>
+               
+               <!-- Raw Evidence Items -->
+               <div>
+                  <h3 class="font-medium text-gray-800 mb-3 flex items-center border-b border-gray-200 pb-2"><span class="mr-2">🧩</span> Raw Evidence Items (from Agent Retrieval)</h3>
+                  <div class="overflow-x-auto border border-gray-200 rounded-lg">
+                     <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                           <tr>
+                              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type / Source</th>
+                              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Snippet</th>
+                              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Trust</th>
+                           </tr>
+                        </thead>
+                        <tbody id="ev-items-tbody" class="bg-white divide-y divide-gray-200 text-sm">
+                           <!-- Injected -->
+                        </tbody>
+                     </table>
+                  </div>
+               </div>
+               
+            </div>
+         </div>
+       </div>
+    </div>
+
+  </main>
+
+  <script src="/static/js/document_agent_test_ui.js"></script>
+  </body>
+  </html>

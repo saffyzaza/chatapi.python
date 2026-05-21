@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Musya Agent — Test UI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'IBM Plex Sans Thai', sans-serif; }
+    .prose h2 { font-size: 1.15rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.4rem; }
+    .prose h3 { font-size: 1.05rem; font-weight: 600; margin-top: 0.8rem; margin-bottom: 0.3rem; }
+    .prose ul, .prose ol { padding-left: 1.5rem; margin: 0.3rem 0; }
+    .prose li { margin: 0.15rem 0; }
+    .prose p { margin: 0.3rem 0; }
+    .prose table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; font-size: 0.85rem; }
+    .prose th, .prose td { border: 1px solid #d1d5db; padding: 4px 8px; text-align: left; }
+    .prose th { background: #f3f4f6; font-weight: 600; }
+    .chat-bubble { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .loading-dots span { animation: pulse 1.4s infinite; }
+    .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+    .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+    #chat-scroll::-webkit-scrollbar { width: 6px; }
+    #chat-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    .chart-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-top:10px; }
+    .chart-card canvas { height:300px !important; width:100% !important; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+  <!-- Header -->
+  <header class="bg-white border-b border-gray-200 sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 bg-gradient-to-br from-purple-500 to-indigo-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">M</div>
+        <div>
+          <h1 class="text-lg font-bold text-gray-800">Musya Agent Test UI</h1>
+          <p class="text-xs text-gray-400">Phase 1 — Accident Domain</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div id="health-badge" class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-400">
+          <span class="w-2 h-2 rounded-full bg-gray-300"></span> Checking...
+        </div>
+        <button onclick="switchTab('chat')" id="tab-chat" class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium bg-purple-50 text-purple-700">Chat</button>
+        <button onclick="switchTab('charts')" id="tab-charts" class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium text-gray-500 hover:bg-gray-100">Charts</button>
+        <button onclick="switchTab('tools')" id="tab-tools" class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium text-gray-500 hover:bg-gray-100">Tools</button>
+        <button onclick="switchTab('data')" id="tab-data" class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium text-gray-500 hover:bg-gray-100">Data</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto">
+
+    <!-- ==================== CHAT TAB ==================== -->
+    <div id="panel-chat" class="panel">
+      <div class="flex flex-col" style="height: calc(100vh - 68px);">
+        <!-- Messages -->
+        <div id="chat-scroll" class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <div class="text-center py-12">
+            <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-purple-100 to-indigo-100 rounded-2xl flex items-center justify-center">
+              <svg class="w-8 h-8 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+            </div>
+            <h2 class="text-lg font-semibold text-gray-700 mb-1">ทดสอบ Agent System</h2>
+            <p class="text-sm text-gray-400 mb-4">ถามเกี่ยวกับข้อมูลอุบัติเหตุ สถิติ จุดเสี่ยง หรือแนวโน้ม</p>
+            <div class="flex flex-wrap justify-center gap-2">
+              <button onclick="sendQuick('สรุปสถานการณ์อุบัติเหตุปี 2024')" class="quick-q">สรุปสถานการณ์อุบัติเหตุปี 2024</button>
+              <button onclick="sendQuick('จุดเสี่ยงอุบัติเหตุ 10 อันดับแรก')" class="quick-q">จุดเสี่ยง 10 อันดับแรก</button>
+              <button onclick="sendQuick('วิเคราะห์อุบัติเหตุตามช่วงเวลา')" class="quick-q">วิเคราะห์ตามช่วงเวลา</button>
+              <button onclick="sendQuick('ความเสี่ยงตามสภาพถนนและอากาศ')" class="quick-q">ความเสี่ยงตามสภาพถนน</button>
+              <button onclick="sendQuick('สถิติอุบัติเหตุจังหวัดเชียงใหม่ ทุกปี 2020-2026')" class="quick-q">เชียงใหม่ ทุกปี</button>
+              <button onclick="sendQuick('เปรียบเทียบจังหวัดที่มีอุบัติเหตุสูงสุด 10 อันดับ')" class="quick-q">Top 10 จังหวัด</button>
+              <button onclick="sendQuick('ถนนเสี่ยงในจังหวัดนครราชสีมา')" class="quick-q">ถนนเสี่ยง นครราชสีมา</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Follow-ups -->
+        <div id="follow-ups" class="hidden px-4 pb-2">
+          <p class="text-xs text-gray-400 mb-1.5 font-medium">คำถามแนะนำ:</p>
+          <div id="follow-ups-list" class="flex flex-wrap gap-2"></div>
+        </div>
+
+        <!-- Input -->
+        <div class="border-t border-gray-200 bg-white px-4 py-3">
+          <form onsubmit="handleSend(event)" class="flex gap-2">
+            <input id="msg-input" type="text" placeholder="พิมพ์คำถามเกี่ยวกับอุบัติเหตุ..." 
+              class="flex-1 px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-purple-300 focus:border-purple-400" />
+            <button id="send-btn" type="submit"
+              class="px-5 py-2.5 bg-purple-600 text-white text-sm font-medium rounded-xl hover:bg-purple-700 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+              ส่ง
+            </button>
+          </form>
+          <div class="flex items-center justify-between mt-2">
+            <p id="status-text" class="text-xs text-gray-400"></p>
+            <button onclick="clearChat()" class="text-xs text-gray-400 hover:text-red-500">ล้างแชท</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== CHARTS TAB ==================== -->
+    <div id="panel-charts" class="panel hidden p-4 space-y-4">
+      <h2 class="text-lg font-semibold text-gray-700">ทดสอบ Chart Tools โดยตรง</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">📈 แนวโน้มอุบัติเหตุรายเดือน</h3>
+          <button onclick="testChart('accident_trend', {})" class="tool-btn">Run Chart</button>
+          <div id="chartbox-accident_trend" class="mt-3 hidden"></div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">📍 Top Hotspots Bar Chart</h3>
+          <input id="ch-hot-n" type="number" value="10" class="tool-input mb-2" placeholder="top_n" />
+          <button onclick="testChart('hotspot', {top_n: parseInt(document.getElementById('ch-hot-n').value)||10})" class="tool-btn">Run Chart</button>
+          <div id="chartbox-hotspot" class="mt-3 hidden"></div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">🕐 การกระจายตามช่วงเวลา</h3>
+          <button onclick="testChart('time_dist', {})" class="tool-btn">Run Chart</button>
+          <div id="chartbox-time_dist" class="mt-3 hidden"></div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">🛣️ สภาพถนน (Pie)</h3>
+          <button onclick="testChart('road_condition', {})" class="tool-btn">Run Chart</button>
+          <div id="chartbox-road_condition" class="mt-3 hidden"></div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">🗺️ แนวโน้มจังหวัด (Line/Bar)</h3>
+          <input id="ch-prov" type="text" placeholder="ชื่อจังหวัด (ว่าง = Top N)" class="tool-input mb-2" />
+          <input id="ch-prov-n" type="number" value="10" class="tool-input mb-2" placeholder="top_n" />
+          <button onclick="testChart('province_trend', {province: document.getElementById('ch-prov').value, top_n: parseInt(document.getElementById('ch-prov-n').value)||10})" class="tool-btn">Run Chart</button>
+          <div id="chartbox-province_trend" class="mt-3 hidden"></div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">🛤️ ถนนเสี่ยงในจังหวัด</h3>
+          <input id="ch-roads-prov" type="text" placeholder="ชื่อจังหวัด (จำเป็น)" class="tool-input mb-2" />
+          <input id="ch-roads-year" type="number" value="0" class="tool-input mb-2" placeholder="ปี (0=ทุกปี)" />
+          <button onclick="testChart('province_roads', {province: document.getElementById('ch-roads-prov').value, year: parseInt(document.getElementById('ch-roads-year').value)||0})" class="tool-btn">Run Chart</button>
+          <div id="chartbox-province_roads" class="mt-3 hidden"></div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">💀 ผู้เสียชีวิตรายเดือน</h3>
+          <input id="ch-death-year" type="number" value="0" class="tool-input mb-2" placeholder="ปี CE (0=ทุกปี)" />
+          <button onclick="testChart('monthly_death', {year: parseInt(document.getElementById('ch-death-year').value)||0})" class="tool-btn">Run Chart</button>
+          <div id="chartbox-monthly_death" class="mt-3 hidden"></div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ==================== TOOLS TAB ==================== -->
+    <div id="panel-tools" class="panel hidden p-4 space-y-4">
+      <h2 class="text-lg font-semibold text-gray-700">ทดสอบ Tools โดยตรง</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+        <!-- Tool: Accident Summary -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">📊 get_accident_summary</h3>
+          <div class="space-y-2">
+            <input id="tool-sum-start" type="text" placeholder="start_date (YYYY-MM-DD)" class="tool-input" />
+            <input id="tool-sum-end" type="text" placeholder="end_date (YYYY-MM-DD)" class="tool-input" />
+            <button onclick="testTool('accident_summary')" class="tool-btn">Run</button>
+          </div>
+          <pre id="result-accident_summary" class="tool-result hidden"></pre>
+        </div>
+
+        <!-- Tool: Hotspots -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">📍 get_accident_hotspots</h3>
+          <div class="space-y-2">
+            <input id="tool-hot-n" type="number" value="10" placeholder="top_n" class="tool-input" />
+            <button onclick="testTool('hotspots')" class="tool-btn">Run</button>
+          </div>
+          <pre id="result-hotspots" class="tool-result hidden"></pre>
+        </div>
+
+        <!-- Tool: Time Distribution -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">🕐 get_accident_time_distribution</h3>
+          <button onclick="testTool('time_dist')" class="tool-btn">Run</button>
+          <pre id="result-time_dist" class="tool-result hidden"></pre>
+        </div>
+
+        <!-- Tool: Road Condition Risk -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">🛣️ get_road_condition_risk</h3>
+          <button onclick="testTool('road_risk')" class="tool-btn">Run</button>
+          <pre id="result-road_risk" class="tool-result hidden"></pre>
+        </div>
+
+        <!-- Tool: Geography Profile -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">🗺️ get_geography_profile</h3>
+          <input id="tool-geo-prov" type="text" placeholder="province name (e.g. กรุงเทพ)" class="tool-input" />
+          <button onclick="testTool('geography')" class="tool-btn mt-2">Run</button>
+          <pre id="result-geography" class="tool-result hidden"></pre>
+        </div>
+
+        <!-- Tool: Search Documents -->
+        <div class="bg-white rounded-xl border border-gray-200 p-4">
+          <h3 class="font-semibold text-sm text-gray-700 mb-2">📄 search_documents</h3>
+          <input id="tool-doc-q" type="text" placeholder="keywords (e.g. อุบัติเหตุ)" class="tool-input" />
+          <button onclick="testTool('search_docs')" class="tool-btn mt-2">Run</button>
+          <pre id="result-search_docs" class="tool-result hidden"></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== DATA TAB ==================== -->
+    <div id="panel-data" class="panel hidden p-4 space-y-4">
+      <h2 class="text-lg font-semibold text-gray-700">สำรวจข้อมูลในฐานข้อมูล</h2>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="data-cards"></div>
+      <div class="bg-white rounded-xl border border-gray-200 p-4">
+        <h3 class="font-semibold text-sm text-gray-700 mb-2">SQL Query (read-only)</h3>
+        <textarea id="sql-input" rows="3" placeholder="SELECT * FROM mart_accident_summary LIMIT 10" 
+          class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-purple-300"></textarea>
+        <button onclick="runSQL()" class="tool-btn mt-2">Execute</button>
+        <div id="sql-result" class="mt-3 hidden overflow-auto max-h-96"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <style>
+    .quick-q { @apply text-xs bg-purple-50 border border-purple-200 text-purple-700 px-3 py-1.5 rounded-full hover:bg-purple-100 transition-all; }
+    .tool-input { @apply w-full px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-300; }
+    .tool-btn { @apply px-4 py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 transition-all; }
+    .tool-result { @apply mt-3 bg-gray-50 rounded-lg p-3 text-xs font-mono whitespace-pre-wrap max-h-60 overflow-auto border border-gray-100; }
+  </style>
+
+  <script>
+    const API = window.location.origin;
+    let isLoading = false;
+
+    // ==================== TABS ====================
+    function switchTab(name) {
+      document.querySelectorAll('.panel').forEach(p => p.classList.add('hidden'));
+      document.getElementById('panel-' + name).classList.remove('hidden');
+      document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('bg-purple-50', 'text-purple-700');
+        b.classList.add('text-gray-500');
+      });
+      const btn = document.getElementById('tab-' + name);
+      btn.classList.add('bg-purple-50', 'text-purple-700');
+      btn.classList.remove('text-gray-500');
+      if (name === 'data') loadDataOverview();
+    }
+
+    // ==================== HEALTH CHECK ====================
+    async function checkHealth() {
+      const badge = document.getElementById('health-badge');
+      try {
+        const r = await fetch(API + '/api/health');
+        const d = await r.json();
+        if (d.status === 'ok') {
+          badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500"></span> All OK';
+          badge.className = 'flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-green-50 text-green-700';
+        } else {
+          badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-yellow-500"></span> Degraded';
+          badge.className = 'flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-yellow-50 text-yellow-700';
+        }
+      } catch(e) {
+        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500"></span> Offline';
+        badge.className = 'flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-red-50 text-red-700';
+      }
+    }
+
+    // ==================== CHART RENDERING ====================
+    let chartCounter = 0;
+
+    function toNumeric(v) {
+      if (v === null || v === undefined) return null;
+      if (typeof v === 'number') return isFinite(v) ? v : null;
+      if (typeof v === 'string') {
+        const c = v.replace(/,/g,'').replace(/%/g,'').trim();
+        if (!c) return null;
+        const p = Number(c);
+        return isNaN(p) ? null : p;
+      }
+      return null;
+    }
+
+    const PALETTE = [
+      '#6366f1','#f59e0b','#ef4444','#10b981','#3b82f6',
+      '#8b5cf6','#ec4899','#14b8a6','#f97316','#84cc16'
+    ];
+
+    function renderCharts(charts, container) {
+      if (!charts || charts.length === 0) return;
+      charts.forEach(function(spec) {
+        const id = 'chart-' + (++chartCounter);
+        const wrapper = document.createElement('div');
+        wrapper.className = 'chart-card';
+
+        const titleEl = document.createElement('p');
+        titleEl.className = 'text-sm font-semibold text-gray-700 mb-2';
+        titleEl.textContent = spec.title || 'กราฟ';
+        wrapper.appendChild(titleEl);
+
+        const canvas = document.createElement('canvas');
+        canvas.id = id;
+        wrapper.appendChild(canvas);
+
+        if (spec.source_note) {
+          const note = document.createElement('p');
+          note.className = 'text-xs text-gray-400 mt-1';
+          note.textContent = 'แหล่งข้อมูล: ' + spec.source_note;
+          wrapper.appendChild(note);
+        }
+        container.appendChild(wrapper);
+
+        // Normalize data (same logic as ChartRenderer.tsx)
+        const nestedData = spec.data && typeof spec.data === 'object' ? spec.data : null;
+        const labels = (nestedData && Array.isArray(nestedData.labels) ? nestedData.labels : []).map(String);
+        const rawDatasets = nestedData && Array.isArray(nestedData.datasets) ? nestedData.datasets : [];
+        const datasets = rawDatasets.map(function(ds, i) {
+          const base = {
+            label: ds.label || 'ข้อมูล',
+            data: (ds.data || []).map(toNumeric),
+          };
+          const type = String(spec.type || '').toLowerCase();
+          if (type === 'line') {
+            const c = (Array.isArray(ds.borderColor) ? ds.borderColor[0] : ds.borderColor) || PALETTE[i % PALETTE.length];
+            return Object.assign(base, { borderColor: c, backgroundColor: c + '30', borderWidth: 2.5, tension: 0.4, pointRadius: 4, fill: true });
+          } else if (type === 'pie' || type === 'doughnut') {
+            return Object.assign(base, { backgroundColor: PALETTE, borderWidth: 1, borderColor: '#fff' });
+          } else {
+            const c = (Array.isArray(ds.backgroundColor) ? ds.backgroundColor[0] : ds.backgroundColor) || PALETTE[i % PALETTE.length];
+            return Object.assign(base, { backgroundColor: c, borderRadius: 4 });
+          }
+        });
+
+        if (typeof Chart === 'undefined') {
+          wrapper.innerHTML += '<p class="text-xs text-red-400">Chart.js ไม่พร้อม</p>';
+          return;
+        }
+
+        const chartType = String(spec.type || 'bar').toLowerCase();
+        new Chart(canvas.getContext('2d'), {
+          type: chartType,
+          data: { labels, datasets },
+          options: Object.assign({
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: true, position: 'top' },
+              title: { display: false },
+            },
+            scales: (chartType === 'pie' || chartType === 'doughnut') ? {} : {
+              x: { grid: { display: false } },
+              y: { beginAtZero: true },
+            },
+          }, spec.options || {}),
+        });
+      });
+    }
+
+    // ==================== CHAT ====================
+    function addMessage(role, content, meta) {
+      const scroll = document.getElementById('chat-scroll');
+      // Remove welcome screen if present
+      const welcome = scroll.querySelector('.text-center');
+      if (welcome) welcome.remove();
+
+      const div = document.createElement('div');
+      div.className = 'chat-bubble flex ' + (role === 'user' ? 'justify-end' : 'justify-start');
+
+      if (role === 'user') {
+        div.innerHTML = `
+          <div class="max-w-[80%] bg-purple-600 text-white px-4 py-2.5 rounded-2xl rounded-br-md text-sm">${escapeHtml(content)}</div>
+        `;
+      } else {
+        const metaHtml = meta ? `
+          <div class="mt-2 pt-2 border-t border-gray-100 flex flex-wrap gap-3 text-[10px] text-gray-400">
+            ${meta.topic ? `<span>📌 ${meta.topic}</span>` : ''}
+            ${meta.elapsed ? `<span>⏱ ${meta.elapsed.toFixed(1)}s</span>` : ''}
+            ${meta.agents ? `<span>🤖 ${meta.agents} agents</span>` : ''}
+            ${meta.chart_count ? `<span>📊 ${meta.chart_count} charts</span>` : ''}
+          </div>
+        ` : '';
+        div.innerHTML = `
+          <div data-inner class="max-w-[85%] bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-md shadow-sm">
+            <div class="prose text-sm text-gray-700">${marked.parse(content)}</div>
+            ${metaHtml}
+          </div>
+        `;
+      }
+      scroll.appendChild(div);
+      scroll.scrollTop = scroll.scrollHeight;
+      return div;
+    }
+
+    function addLoadingBubble() {
+      const scroll = document.getElementById('chat-scroll');
+      const div = document.createElement('div');
+      div.id = 'loading-bubble';
+      div.className = 'chat-bubble flex justify-start';
+      div.innerHTML = `
+        <div class="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-bl-md shadow-sm">
+          <div class="loading-dots text-gray-400 text-sm">
+            <span>●</span> <span>●</span> <span>●</span>
+          </div>
+          <p id="loading-status" class="text-xs text-gray-400 mt-1">กำลังประมวลผลผ่าน Agent pipeline...</p>
+        </div>
+      `;
+      scroll.appendChild(div);
+      scroll.scrollTop = scroll.scrollHeight;
+    }
+
+    function removeLoadingBubble() {
+      const el = document.getElementById('loading-bubble');
+      if (el) el.remove();
+    }
+
+    function showFollowUps(followUps) {
+      const container = document.getElementById('follow-ups');
+      const list = document.getElementById('follow-ups-list');
+      if (!followUps || followUps.length === 0) {
+        container.classList.add('hidden');
+        return;
+      }
+      list.innerHTML = followUps.map(q =>
+        `<button onclick="sendQuick('${escapeHtml(q)}')" class="quick-q">${escapeHtml(q)}</button>`
+      ).join('');
+      container.classList.remove('hidden');
+    }
+
+    function sendQuick(text) {
+      document.getElementById('msg-input').value = text;
+      handleSend(new Event('submit'));
+    }
+
+    async function handleSend(e) {
+      e.preventDefault();
+      const input = document.getElementById('msg-input');
+      const msg = input.value.trim();
+      if (!msg || isLoading) return;
+
+      isLoading = true;
+      input.value = '';
+      document.getElementById('send-btn').disabled = true;
+      document.getElementById('follow-ups').classList.add('hidden');
+      document.getElementById('status-text').textContent = '';
+
+      addMessage('user', msg);
+      addLoadingBubble();
+
+      const startTime = Date.now();
+      try {
+        const r = await fetch(API + '/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: msg }),
+        });
+
+        removeLoadingBubble();
+
+        if (!r.ok) {
+          const err = await r.json();
+          addMessage('assistant', `❌ Error: ${err.detail || r.statusText}`);
+          return;
+        }
+
+        const data = await r.json();
+        const elapsed = (Date.now() - startTime) / 1000;
+        const msgDiv = addMessage('assistant', data.content, {
+          topic: data.topic,
+          elapsed: data.metadata?.elapsed_seconds || elapsed,
+          agents: data.metadata?.agent_count,
+          chart_count: data.charts?.length || 0,
+        });
+        // Render charts inside the message bubble
+        if (data.charts && data.charts.length > 0) {
+          const inner = msgDiv.querySelector('[data-inner]') || msgDiv.firstElementChild;
+          if (inner) renderCharts(data.charts, inner);
+        }
+        showFollowUps(data.follow_ups);
+        document.getElementById('status-text').textContent = `Response in ${elapsed.toFixed(1)}s`;
+      } catch(err) {
+        removeLoadingBubble();
+        addMessage('assistant', `❌ Network error: ${err.message}`);
+      } finally {
+        isLoading = false;
+        document.getElementById('send-btn').disabled = false;
+        input.focus();
+      }
+    }
+
+    function clearChat() {
+      const scroll = document.getElementById('chat-scroll');
+      scroll.innerHTML = `
+        <div class="text-center py-12">
+          <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-purple-100 to-indigo-100 rounded-2xl flex items-center justify-center">
+            <svg class="w-8 h-8 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+          </div>
+          <h2 class="text-lg font-semibold text-gray-700 mb-1">ทดสอบ Agent System</h2>
+          <p class="text-sm text-gray-400 mb-4">ถามเกี่ยวกับข้อมูลอุบัติเหตุ สถิติ จุดเสี่ยง หรือแนวโน้ม</p>
+          <div class="flex flex-wrap justify-center gap-2">
+            <button onclick="sendQuick('สรุปสถานการณ์อุบัติเหตุปี 2024')" class="quick-q">สรุปสถานการณ์อุบัติเหตุปี 2024</button>
+            <button onclick="sendQuick('จุดเสี่ยงอุบัติเหตุ 10 อันดับแรก')" class="quick-q">จุดเสี่ยง 10 อันดับแรก</button>
+            <button onclick="sendQuick('วิเคราะห์อุบัติเหตุตามช่วงเวลา')" class="quick-q">วิเคราะห์ตามช่วงเวลา</button>
+            <button onclick="sendQuick('ความเสี่ยงตามสภาพถนนและอากาศ')" class="quick-q">ความเสี่ยงตามสภาพถนน</button>
+            <button onclick="sendQuick('สถิติอุบัติเหตุจังหวัดเชียงใหม่ ทุกปี 2020-2026')" class="quick-q">เชียงใหม่ ทุกปี</button>
+            <button onclick="sendQuick('เปรียบเทียบจังหวัดที่มีอุบัติเหตุสูงสุด 10 อันดับ')" class="quick-q">Top 10 จังหวัด</button>
+            <button onclick="sendQuick('ถนนเสี่ยงในจังหวัดนครราชสีมา')" class="quick-q">ถนนเสี่ยง นครราชสีมา</button>
+          </div>
+        </div>
+      `;
+      document.getElementById('follow-ups').classList.add('hidden');
+      document.getElementById('status-text').textContent = '';
+    }
+
+    // ==================== TOOLS ====================
+    async function testTool(tool) {
+      const resultEl = document.getElementById('result-' + tool);
+      resultEl.classList.remove('hidden');
+      resultEl.textContent = 'Loading...';
+
+      let endpoint = '', body = {};
+      switch(tool) {
+        case 'accident_summary':
+          endpoint = '/api/test/tool/accident_summary';
+          body = { start_date: document.getElementById('tool-sum-start').value, end_date: document.getElementById('tool-sum-end').value };
+          break;
+        case 'hotspots':
+          endpoint = '/api/test/tool/hotspots';
+          body = { top_n: parseInt(document.getElementById('tool-hot-n').value) || 10 };
+          break;
+        case 'time_dist':
+          endpoint = '/api/test/tool/time_distribution';
+          break;
+        case 'road_risk':
+          endpoint = '/api/test/tool/road_condition_risk';
+          break;
+        case 'geography':
+          endpoint = '/api/test/tool/geography';
+          body = { province_name: document.getElementById('tool-geo-prov').value || 'กรุงเทพ' };
+          break;
+        case 'search_docs':
+          endpoint = '/api/test/tool/search_documents';
+          body = { keywords: document.getElementById('tool-doc-q').value || 'อุบัติเหตุ' };
+          break;
+      }
+
+      try {
+        const r = await fetch(API + endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        resultEl.textContent = typeof d.result === 'string' ? d.result : JSON.stringify(d, null, 2);
+      } catch(e) {
+        resultEl.textContent = 'Error: ' + e.message;
+      }
+    }
+
+    // ==================== CHART TOOLS TEST ====================
+    const chartInstances = {};
+
+    async function testChart(toolName, body) {
+      const boxId = 'chartbox-' + toolName;
+      const box = document.getElementById(boxId);
+      if (!box) return;
+      box.classList.remove('hidden');
+      box.innerHTML = '<p class="text-xs text-gray-400">Loading...</p>';
+
+      // Destroy previous chart instance if any
+      if (chartInstances[toolName]) {
+        try { chartInstances[toolName].destroy(); } catch(e) {}
+        delete chartInstances[toolName];
+      }
+
+      try {
+        const r = await fetch(API + '/api/test/chart/' + toolName, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const d = await r.json();
+        const spec = d.chart;
+
+        if (!spec || spec.error) {
+          box.innerHTML = `<p class="text-xs text-red-500">Error: ${escapeHtml(spec?.error || 'ไม่มีข้อมูล')}</p>`;
+          return;
+        }
+
+        box.innerHTML = '';
+
+        // Title
+        const titleEl = document.createElement('p');
+        titleEl.className = 'text-xs font-semibold text-gray-600 mb-2';
+        titleEl.textContent = spec.title || toolName;
+        box.appendChild(titleEl);
+
+        // Canvas with explicit height
+        const canvasWrap = document.createElement('div');
+        canvasWrap.style.height = '280px';
+        canvasWrap.style.position = 'relative';
+        const canvas = document.createElement('canvas');
+        canvasWrap.appendChild(canvas);
+        box.appendChild(canvasWrap);
+
+        // Source note
+        if (spec.source_note) {
+          const note = document.createElement('p');
+          note.className = 'text-[10px] text-gray-400 mt-1';
+          note.textContent = 'แหล่งข้อมูล: ' + spec.source_note;
+          box.appendChild(note);
+        }
+
+        // Build chart
+        const nestedData = spec.data && typeof spec.data === 'object' ? spec.data : null;
+        const labels = (nestedData?.labels || []).map(String);
+        const rawDatasets = nestedData?.datasets || [];
+        const chartType = String(spec.type || 'bar').toLowerCase();
+
+        const datasets = rawDatasets.map(function(ds, i) {
+          const base = { label: ds.label || 'ข้อมูล', data: (ds.data || []).map(toNumeric) };
+          if (chartType === 'line') {
+            const c = (Array.isArray(ds.borderColor) ? ds.borderColor[0] : ds.borderColor) || PALETTE[i % PALETTE.length];
+            return Object.assign(base, { borderColor: c, backgroundColor: c + '30', borderWidth: 2.5, tension: 0.4, pointRadius: 4, fill: true });
+          } else if (chartType === 'pie' || chartType === 'doughnut') {
+            return Object.assign(base, { backgroundColor: PALETTE.slice(0, base.data.length), borderWidth: 1, borderColor: '#fff' });
+          } else {
+            const c = (Array.isArray(ds.backgroundColor) ? ds.backgroundColor[0] : ds.backgroundColor) || PALETTE[i % PALETTE.length];
+            return Object.assign(base, { backgroundColor: c, borderRadius: 3 });
+          }
+        });
+
+        chartInstances[toolName] = new Chart(canvas.getContext('2d'), {
+          type: chartType,
+          data: { labels, datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: true, position: 'top' },
+              title: { display: false },
+            },
+            scales: (chartType === 'pie' || chartType === 'doughnut') ? {} : {
+              x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+              y: { beginAtZero: true, ticks: { font: { size: 10 } } },
+            },
+          },
+        });
+
+      } catch(e) {
+        box.innerHTML = `<p class="text-xs text-red-500">Network error: ${escapeHtml(e.message)}</p>`;
+      }
+    }
+
+    // ==================== DATA ====================
+    async function loadDataOverview() {
+      const container = document.getElementById('data-cards');
+      const tables = [
+        { name: 'fact_accident_event', label: 'Accident Events', icon: '🚗' },
+        { name: 'fact_accident_person', label: 'Accident Persons', icon: '👤' },
+        { name: 'mart_accident_summary', label: 'Monthly Summary', icon: '📊' },
+        { name: 'mart_accident_hotspot', label: 'Hotspots', icon: '📍' },
+        { name: 'dim_geography', label: 'Geography', icon: '🗺️' },
+        { name: 'dim_road_segment', label: 'Road Segments', icon: '🛣️' },
+        { name: 'dim_source', label: 'Data Sources', icon: '📁' },
+        { name: 'accident', label: 'Legacy Accident', icon: '📋' },
+        { name: 'dim_time', label: 'Time Dimension', icon: '📅' },
+      ];
+
+      container.innerHTML = tables.map(t => `
+        <div class="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-3 cursor-pointer hover:border-purple-300 transition-all"
+             onclick="runSQL_preset('SELECT * FROM ${t.name} LIMIT 20')">
+          <span class="text-2xl">${t.icon}</span>
+          <div>
+            <p class="text-sm font-semibold text-gray-700">${t.label}</p>
+            <p class="text-xs text-gray-400 font-mono">${t.name}</p>
+            <p id="count-${t.name}" class="text-xs text-purple-500 mt-0.5">...</p>
+          </div>
+        </div>
+      `).join('');
+
+      // Fetch counts
+      for (const t of tables) {
+        try {
+          const r = await fetch(API + '/api/test/query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sql: `SELECT COUNT(*) AS cnt FROM ${t.name}` }),
+          });
+          const d = await r.json();
+          document.getElementById('count-' + t.name).textContent = (d.rows?.[0]?.cnt || 0) + ' rows';
+        } catch(e) {
+          document.getElementById('count-' + t.name).textContent = 'error';
+        }
+      }
+    }
+
+    async function runSQL() {
+      const sql = document.getElementById('sql-input').value.trim();
+      if (!sql) return;
+      await execSQL(sql);
+    }
+
+    function runSQL_preset(sql) {
+      document.getElementById('sql-input').value = sql;
+      execSQL(sql);
+    }
+
+    async function execSQL(sql) {
+      const resultEl = document.getElementById('sql-result');
+      resultEl.classList.remove('hidden');
+      resultEl.innerHTML = '<p class="text-xs text-gray-400">Executing...</p>';
+
+      try {
+        const r = await fetch(API + '/api/test/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sql }),
+        });
+        const d = await r.json();
+        if (d.error) {
+          resultEl.innerHTML = `<p class="text-xs text-red-500">${escapeHtml(d.error)}</p>`;
+          return;
+        }
+        if (!d.rows || d.rows.length === 0) {
+          resultEl.innerHTML = '<p class="text-xs text-gray-400">No rows returned</p>';
+          return;
+        }
+        const cols = Object.keys(d.rows[0]);
+        resultEl.innerHTML = `
+          <p class="text-xs text-gray-400 mb-2">${d.rows.length} row(s) returned</p>
+          <div class="overflow-auto">
+            <table class="w-full text-xs border-collapse">
+              <thead><tr>${cols.map(c => `<th class="border border-gray-200 bg-gray-50 px-2 py-1 text-left font-semibold">${escapeHtml(c)}</th>`).join('')}</tr></thead>
+              <tbody>${d.rows.map(row => `<tr>${cols.map(c => `<td class="border border-gray-200 px-2 py-1">${escapeHtml(String(row[c] ?? ''))}</td>`).join('')}</tr>`).join('')}</tbody>
+            </table>
+          </div>
+        `;
+      } catch(e) {
+        resultEl.innerHTML = `<p class="text-xs text-red-500">Error: ${escapeHtml(e.message)}</p>`;
+      }
+    }
+
+    // ==================== UTILS ====================
+    function escapeHtml(text) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
+    // Init
+    checkHealth();
+    setInterval(checkHealth, 30000);
+  </script>
+</body>
+</html>

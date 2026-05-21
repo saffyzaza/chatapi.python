@@ -1,0 +1,807 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Accident Chat — เขตสุขภาพที่ 10</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'IBM Plex Sans Thai', sans-serif; }
+
+    /* Scrollbars */
+    .chat-scroll::-webkit-scrollbar { width: 5px; }
+    .chat-scroll::-webkit-scrollbar-track { background: #f1f5f9; }
+    .chat-scroll::-webkit-scrollbar-thumb { background: #c7d2fe; border-radius: 4px; }
+
+    /* Spinner */
+    .spinner { border: 3px solid #e0e7ff; border-top-color: #4f46e5; border-radius: 50%;
+               width: 18px; height: 18px; animation: spin 0.7s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Markdown prose */
+    .prose h1 { font-size: 1.15rem; font-weight: 700; margin: 1rem 0 0.4rem; color: #1e1b4b; }
+    .prose h2 { font-size: 1.05rem; font-weight: 700; margin: 0.9rem 0 0.35rem; color: #1e1b4b;
+                border-bottom: 1px solid #e0e7ff; padding-bottom: 0.2rem; }
+    .prose h3 { font-size: 0.95rem; font-weight: 600; margin: 0.75rem 0 0.25rem; color: #312e81; }
+    .prose p { margin: 0.4rem 0; line-height: 1.65; }
+    .prose ul { list-style: disc; padding-left: 1.4rem; margin: 0.3rem 0; }
+    .prose ol { list-style: decimal; padding-left: 1.4rem; margin: 0.3rem 0; }
+    .prose li { margin-bottom: 0.2rem; }
+    .prose strong { font-weight: 600; color: #312e81; }
+    .prose em { font-style: italic; color: #6366f1; }
+    .prose code { background: #ede9fe; color: #5b21b6; padding: 0.1em 0.35em; border-radius: 3px; font-size: 0.85em; font-family: monospace; }
+    .prose pre { background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 6px; padding: 0.75rem;
+                 overflow-x: auto; font-size: 0.82rem; margin: 0.5rem 0; white-space: pre-wrap; word-break: break-word; }
+    .prose table { width: 100%; border-collapse: collapse; font-size: 0.83rem; margin: 0.5rem 0 0.75rem; }
+    .prose th { background: #e0e7ff; padding: 0.4rem 0.65rem; text-align: left; font-weight: 600;
+                border: 1px solid #c7d2fe; }
+    .prose td { border: 1px solid #e5e7eb; padding: 0.3rem 0.65rem; }
+    .prose tr:nth-child(even) td { background: #f8fafc; }
+    .prose blockquote { border-left: 3px solid #6366f1; padding: 0.3rem 0.75rem; margin: 0.5rem 0;
+                        background: #f5f3ff; color: #4c1d95; border-radius: 0 4px 4px 0; }
+    .prose a { color: #4f46e5; text-decoration: underline; }
+
+    /* Chat bubbles */
+    .bubble-user { background: #4f46e5; color: #fff; border-radius: 18px 18px 4px 18px; }
+    .bubble-bot { background: #fff; border: 1px solid #e0e7ff; border-radius: 18px 18px 18px 4px; }
+
+    /* Agent step pills */
+    .step-pill { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.7rem;
+                 border-radius: 99px; font-size: 0.78rem; font-weight: 500; transition: all 0.25s; }
+    .step-pill.running { background: #ede9fe; color: #5b21b6; animation: pulse 1.2s infinite; }
+    .step-pill.done    { background: #d1fae5; color: #065f46; }
+    .step-pill.error   { background: #fee2e2; color: #991b1b; }
+    .step-pill.idle    { background: #f1f5f9; color: #94a3b8; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+    /* Question button */
+    .q-btn { display: block; width: 100%; text-align: left; padding: 0.45rem 0.65rem;
+             border-radius: 8px; font-size: 0.78rem; color: #374151; transition: background 0.15s; }
+    .q-btn:hover { background: #e0e7ff; color: #3730a3; }
+
+    /* Limitation tag */
+    .limit-tag { display: inline-flex; align-items: center; gap: 0.25rem; background: #fef3c7;
+                 color: #92400e; border: 1px solid #fcd34d; border-radius: 99px;
+                 font-size: 0.72rem; padding: 0.15rem 0.55rem; }
+
+    /* Raw data panel */
+    .raw-data { font-size: 0.78rem; font-family: 'IBM Plex Sans Thai', monospace;
+                white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+
+    /* Tabs */
+    .tab-btn { padding: 0.35rem 0.85rem; border-radius: 8px; font-size: 0.82rem;
+               font-weight: 500; cursor: pointer; transition: background 0.15s; }
+    .tab-btn.active { background: #4f46e5; color: #fff; }
+    .tab-btn:not(.active) { color: #6b7280; }
+    .tab-btn:not(.active):hover { background: #f3f4f6; }
+
+    /* Resize handle - left panel */
+    #resize-handle { cursor: col-resize; width: 4px; background: #e5e7eb; flex-shrink: 0; }
+    #resize-handle:hover { background: #c7d2fe; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col h-screen overflow-hidden">
+
+<!-- ── Header ─────────────────────────────────────────────────────────── -->
+<header class="bg-indigo-700 text-white px-5 py-3 shadow-md flex-shrink-0">
+  <div class="flex items-center justify-between">
+    <div>
+      <h1 class="text-lg font-semibold leading-tight">🚗 Accident Chat — เขตสุขภาพที่ 10</h1>
+      <p class="text-indigo-200 text-xs mt-0.5">อุบลราชธานี · ศรีสะเกษ · ยโสธร · อำนาจเจริญ · มุกดาหาร</p>
+    </div>
+    <div class="flex items-center gap-3 text-xs text-indigo-300">
+      <span>สำหรับ สสจ./ศปถ./สสส.</span>
+      <a href="/accident-policy" class="hover:text-white underline">Policy Report →</a>
+    </div>
+  </div>
+</header>
+
+<!-- ── Main Layout ────────────────────────────────────────────────────── -->
+<div class="flex flex-1 overflow-hidden">
+
+  <!-- ═══ Left Panel: Province + Sample Questions ═══ -->
+  <aside id="left-panel" class="w-72 flex-shrink-0 flex flex-col bg-white border-r border-gray-200 overflow-hidden">
+    <!-- Province + Year settings -->
+    <div class="p-4 border-b border-gray-100 flex-shrink-0">
+      <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">จังหวัด</label>
+      <select id="province-select" onchange="onProvinceChange()"
+              class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none">
+        <option value="">ทั้งเขต 10 (ทุกจังหวัด)</option>
+      </select>
+      <div class="mt-3">
+        <label class="block text-xs text-gray-500 mb-1">อำเภอ</label>
+        <select id="district-input"
+                class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 outline-none">
+          <option value="">ทุกอำเภอ</option>
+        </select>
+      </div>
+      <div class="mt-3 flex gap-2">
+        <div class="flex-1">
+          <label class="block text-xs text-gray-500 mb-1">ปีเริ่มต้น (ค.ศ.)</label>
+          <input id="year-start" type="number" value="2021" min="2020" max="2026"
+                 class="w-full text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-300" />
+        </div>
+        <div class="flex-1">
+          <label class="block text-xs text-gray-500 mb-1">ปีสิ้นสุด (ค.ศ.)</label>
+          <input id="year-end" type="number" value="2026" min="2020" max="2026"
+                 class="w-full text-sm border border-gray-200 rounded-lg px-2.5 py-1.5 outline-none focus:ring-2 focus:ring-indigo-300" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Sample questions -->
+    <div class="flex-1 overflow-y-auto chat-scroll px-2 py-2">
+      <div id="questions-container">
+        <p class="text-xs text-gray-400 px-2 py-2">กำลังโหลดคำถาม...</p>
+      </div>
+    </div>
+  </aside>
+
+  <!-- resize handle -->
+  <div id="resize-handle"></div>
+
+  <!-- ═══ Centre: Chat ═══ -->
+  <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+    <!-- Agent thinking bar -->
+    <div id="thinking-bar" class="bg-indigo-50 border-b border-indigo-100 px-4 py-2 flex-shrink-0 hidden">
+      <div class="flex items-center gap-3 flex-wrap">
+        <span class="text-xs font-semibold text-indigo-600 mr-1">Agent:</span>
+        <div id="step-pills" class="flex items-center gap-2 flex-wrap">
+          <div class="step-pill idle">🗄️ Accident SQL Agent</div>
+          <div class="step-pill idle">📋 Accident Answer Writer</div>
+        </div>
+        <span id="elapsed-label" class="text-xs text-indigo-400 ml-auto hidden"></span>
+      </div>
+    </div>
+
+    <!-- Chat messages -->
+    <div id="chat-messages" class="flex-1 overflow-y-auto chat-scroll px-4 py-4 space-y-4">
+      <!-- Welcome message -->
+      <div class="flex gap-3">
+        <div class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 text-white text-sm">🚗</div>
+        <div class="bubble-bot rounded-2xl px-4 py-3 max-w-2xl shadow-sm">
+          <div class="prose text-sm">
+            <p><strong>สวัสดีครับ!</strong> ฉันคือ Accident Chat Agent สำหรับเขตสุขภาพที่ 10</p>
+            <p>คุณสามารถถามคำถามเชิงนโยบายอุบัติเหตุทางถนน เช่น:</p>
+            <ul>
+              <li>ถนนที่เสี่ยงที่สุดในจังหวัดอุบลราชธานีคือถนนใด?</li>
+              <li>แนวโน้มผู้เสียชีวิตของเขตสุขภาพที่ 10 ในช่วง 3 ปีที่ผ่านมา</li>
+              <li>เดือนใดที่อุบัติเหตุสูงสุดและมีเทศกาลอะไรบ้าง?</li>
+            </ul>
+            <p class="text-xs text-gray-500 mt-2">💡 คลิกคำถามตัวอย่างด้านซ้าย หรือพิมพ์คำถามเองได้เลย</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input bar -->
+    <div class="border-t border-gray-200 bg-white px-4 py-3 flex-shrink-0">
+      <div class="flex gap-2 items-end">
+        <textarea id="question-input"
+          rows="2"
+          placeholder="พิมพ์คำถามเชิงนโยบายอุบัติเหตุ... (Enter = ส่ง, Shift+Enter = ขึ้นบรรทัด)"
+          class="flex-1 text-sm border border-gray-200 rounded-xl px-3.5 py-2.5 resize-none outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400"
+          onkeydown="handleKey(event)"></textarea>
+        <button id="send-btn" onclick="sendQuestion()"
+          class="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-4 py-2.5 text-sm font-medium flex items-center gap-2 flex-shrink-0 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          <span id="send-icon">➤</span>
+          <span id="send-label">ส่ง</span>
+        </button>
+      </div>
+      <p class="text-xs text-gray-400 mt-1">ข้อมูล: ค.ศ. 2021-2026 | fact_accident_person ไม่มีข้อมูล | road_name ส่วนใหญ่ไม่ระบุ</p>
+    </div>
+  </div>
+
+  <!-- ═══ Right Panel: Raw Data / Debug ═══ -->
+  <aside id="right-panel" class="w-80 flex-shrink-0 flex flex-col bg-white border-l border-gray-200 overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-100 flex-shrink-0">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-xs font-semibold text-gray-600 uppercase tracking-wide">ข้อมูลดิบ / Debug</span>
+        <button onclick="toggleRightPanel()" class="text-xs text-gray-400 hover:text-gray-600">ซ่อน</button>
+      </div>
+      <div class="flex gap-1" id="right-tabs">
+        <button class="tab-btn active" onclick="switchTab('raw')" data-tab="raw">Raw SQL</button>
+        <button class="tab-btn" onclick="switchTab('limits')" data-tab="limits">ข้อจำกัด</button>
+        <button class="tab-btn" onclick="switchTab('tools')" data-tab="tools">Tools</button>
+      </div>
+    </div>
+
+    <div class="flex-1 overflow-y-auto chat-scroll p-3">
+      <!-- Raw data tab -->
+      <div id="tab-raw" class="tab-content">
+        <p class="text-xs text-gray-400 italic">ข้อมูลดิบจาก SQL tools จะแสดงที่นี่หลังจากส่งคำถาม</p>
+      </div>
+      <!-- Limitations tab -->
+      <div id="tab-limits" class="tab-content hidden">
+        <div class="space-y-2">
+          <div class="limit-tag">⚠️ fact_accident_person ว่างทั้งหมด</div>
+          <div class="limit-tag">⚠️ light_condition = NULL</div>
+          <div class="limit-tag">⚠️ road_condition = NULL</div>
+          <div class="limit-tag">⚠️ road_name ส่วนใหญ่ไม่ระบุ</div>
+          <div class="limit-tag">📅 ปี DB = ค.ศ. (CE+543=พ.ศ.)</div>
+        </div>
+        <div id="dynamic-limits" class="mt-3 space-y-1.5"></div>
+      </div>
+      <!-- Tools used tab -->
+      <div id="tab-tools" class="tab-content hidden">
+        <p class="text-xs text-gray-400 italic">เครื่องมือที่ใช้จะแสดงที่นี่หลังจากได้รับคำตอบ</p>
+      </div>
+    </div>
+
+    <!-- Quick data preview -->
+    <div class="border-t border-gray-100 px-3 py-2.5 flex-shrink-0">
+      <p class="text-xs font-semibold text-gray-500 mb-2">ดูข้อมูลด่วน (ไม่ใช้ LLM)</p>
+      <div class="flex gap-1.5 flex-wrap">
+        <button onclick="quickPreview('hotspot_roads')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full transition-colors">ถนนเสี่ยง</button>
+        <button onclick="quickPreview('kpi_trend')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full transition-colors">KPI ปีละ</button>
+        <button onclick="quickPreview('fatal_timeband')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full transition-colors">เวลาเสี่ยง</button>
+        <button onclick="quickPreview('province_executive_summary')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full transition-colors">Executive</button>
+        <button onclick="quickPreview('late_night_vehicles')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full transition-colors">กลางคืน</button>
+        <button onclick="quickPreview('monthly_vehicle_pattern')" class="text-xs bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-2.5 py-1 rounded-full transition-colors">รายเดือน</button>
+        <button onclick="quickPreview('district_summary')" class="text-xs bg-purple-50 hover:bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full transition-colors">รายอำเภอ</button>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<!-- ── Hidden right panel expand button ────────────────────────────────── -->
+<button id="show-right-btn" onclick="toggleRightPanel()" class="fixed right-0 top-1/2 -translate-y-1/2 bg-indigo-600 text-white px-1.5 py-4 rounded-l-lg text-xs hidden shadow-lg" title="แสดง Debug Panel">◀</button>
+
+<script>
+// ══════════════════════════════════════════════════════════════════════
+// State
+// ══════════════════════════════════════════════════════════════════════
+let isLoading = false;
+let currentRawData = '';
+let rightPanelVisible = true;
+
+// ══════════════════════════════════════════════════════════════════════
+// Init
+// ══════════════════════════════════════════════════════════════════════
+// Cache all districts grouped by province (loaded once)
+let _allDistricts = {};
+
+window.addEventListener('DOMContentLoaded', () => {
+  loadProvinces();
+  loadAllDistricts();
+  loadSampleQuestions();
+  initResizeHandle();
+});
+
+async function loadProvinces() {
+  try {
+    const r = await fetch('/api/accident-chat/provinces');
+    const d = await r.json();
+    const sel = document.getElementById('province-select');
+    (d.provinces || []).forEach(p => {
+      const o = document.createElement('option');
+      o.value = p; o.textContent = p;
+      sel.appendChild(o);
+    });
+  } catch (e) { console.warn('province load failed', e); }
+}
+
+async function loadAllDistricts() {
+  try {
+    const r = await fetch('/api/accident-chat/districts');
+    const d = await r.json();
+    _allDistricts = d.grouped || {};
+    // Populate with all districts initially (no province selected)
+    populateDistrictSelect('');
+  } catch (e) { console.warn('districts load failed', e); }
+}
+
+function populateDistrictSelect(province) {
+  const sel = document.getElementById('district-input');
+  sel.innerHTML = '<option value="">ทุกอำเภอ</option>';
+
+  if (province && _allDistricts[province]) {
+    // Single province — show its districts directly
+    _allDistricts[province].forEach(dist => {
+      const o = document.createElement('option');
+      o.value = dist; o.textContent = dist;
+      sel.appendChild(o);
+    });
+  } else if (!province) {
+    // All provinces — show grouped optgroups
+    const sortedProvs = Object.keys(_allDistricts).sort();
+    sortedProvs.forEach(prov => {
+      const grp = document.createElement('optgroup');
+      grp.label = prov;
+      (_allDistricts[prov] || []).forEach(dist => {
+        const o = document.createElement('option');
+        o.value = dist; o.textContent = dist;
+        grp.appendChild(o);
+      });
+      sel.appendChild(grp);
+    });
+  }
+}
+
+function onProvinceChange() {
+  const province = document.getElementById('province-select').value;
+  populateDistrictSelect(province);
+}
+
+async function loadSampleQuestions() {
+  try {
+    const r = await fetch('/api/accident-chat/sample-questions');
+    const d = await r.json();
+    renderQuestions(d.groups || []);
+  } catch (e) {
+    document.getElementById('questions-container').innerHTML =
+      '<p class="text-xs text-red-400 px-2">โหลดคำถามไม่สำเร็จ</p>';
+  }
+}
+
+function renderQuestions(groups) {
+  const container = document.getElementById('questions-container');
+  container.innerHTML = '';
+  groups.forEach(group => {
+    const header = document.createElement('div');
+    header.className = 'px-2 pt-3 pb-1';
+    header.innerHTML = `<p class="text-xs font-semibold text-indigo-600 uppercase tracking-wide leading-tight">${escHtml(group.label)}</p>`;
+    container.appendChild(header);
+    group.questions.forEach(q => {
+      const btn = document.createElement('button');
+      btn.className = 'q-btn';
+      btn.textContent = q.text;
+      btn.onclick = () => fillQuestion(q.text);
+      container.appendChild(btn);
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Chat
+// ══════════════════════════════════════════════════════════════════════
+function fillQuestion(text) {
+  document.getElementById('question-input').value = text;
+  document.getElementById('question-input').focus();
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendQuestion();
+  }
+}
+
+async function sendQuestion() {
+  if (isLoading) return;
+  const input = document.getElementById('question-input');
+  const question = input.value.trim();
+  if (!question) return;
+
+  const province = document.getElementById('province-select').value;
+  const district = document.getElementById('district-input').value.trim();
+  const yearStart = parseInt(document.getElementById('year-start').value) || 2021;
+  const yearEnd = parseInt(document.getElementById('year-end').value) || 2026;
+
+  input.value = '';
+  appendUserBubble(question);
+  setLoading(true);
+  showThinkingBar();
+  resetStepPills();
+  clearRightPanel();
+
+  const body = { question, province, district, year_start: yearStart, year_end: yearEnd };
+
+  try {
+    const botMsgId = appendBotBubble('', true);
+    let resultData = null;
+
+    // Use SSE streaming
+    const resp = await fetch('/api/accident-chat/ask/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      updateBotBubble(botMsgId, `**เกิดข้อผิดพลาด:** ${escHtml(err.detail?.error || err.error || resp.statusText)}`, []);
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let startTime = Date.now();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop(); // keep incomplete chunk
+
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        try {
+          const event = JSON.parse(line.slice(5).trim());
+          if (event.type === 'start') {
+            startTime = Date.now();
+          } else if (event.type === 'progress') {
+            updateStepPill(event.agent_name, event.agent_icon, event.status, event.message);
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            document.getElementById('elapsed-label').textContent = `${elapsed}s`;
+            document.getElementById('elapsed-label').classList.remove('hidden');
+          } else if (event.type === 'result') {
+            resultData = event.data;
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            finishStepPills();
+            updateBotBubble(botMsgId, resultData.answer, resultData.data_limitations, elapsed);
+            updateRightPanel(resultData.raw_data, resultData.data_limitations, resultData.tools_used);
+          } else if (event.type === 'error') {
+            updateBotBubble(botMsgId, `**เกิดข้อผิดพลาด:** ${escHtml(event.message)}`, []);
+          }
+        } catch (parseErr) { /* partial line */ }
+      }
+    }
+
+    if (!resultData) {
+      updateBotBubble(botMsgId, 'ไม่ได้รับผลลัพธ์จาก pipeline', []);
+    }
+  } catch (err) {
+    appendBotBubble(`**เกิดข้อผิดพลาด:** ${escHtml(err.message)}`, false);
+  } finally {
+    setLoading(false);
+    hideThinkingBar();
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Chat bubble helpers
+// ══════════════════════════════════════════════════════════════════════
+let msgCounter = 0;
+
+function appendUserBubble(text) {
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'flex justify-end gap-3';
+  div.innerHTML = `
+    <div class="bubble-user rounded-2xl px-4 py-2.5 max-w-xl shadow-sm text-sm leading-relaxed">
+      ${escHtml(text)}
+    </div>
+    <div class="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center flex-shrink-0 text-sm">👤</div>
+  `;
+  container.appendChild(div);
+  scrollChat();
+}
+
+function appendBotBubble(text, showSpinner) {
+  const id = `msg-${++msgCounter}`;
+  const container = document.getElementById('chat-messages');
+  const div = document.createElement('div');
+  div.className = 'flex gap-3';
+  div.id = id;
+  div.innerHTML = `
+    <div class="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0 text-white text-sm">🚗</div>
+    <div class="bubble-bot rounded-2xl px-4 py-3 max-w-3xl shadow-sm flex-1 min-w-0">
+      ${showSpinner
+        ? '<div class="flex items-center gap-2 text-indigo-400 text-sm"><div class="spinner"></div><span>กำลังวิเคราะห์...</span></div>'
+        : `<div class="prose text-sm">${renderMarkdown(text)}</div>`
+      }
+    </div>
+  `;
+  container.appendChild(div);
+  scrollChat();
+  return id;
+}
+
+function updateBotBubble(id, text, limitations, elapsed) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const inner = el.querySelector('.bubble-bot');
+  if (!inner) return;
+
+  let html = `<div class="prose text-sm">${renderMarkdown(text)}</div>`;
+
+  if (limitations && limitations.length > 0) {
+    html += `<div class="mt-3 flex flex-wrap gap-1.5">`;
+    limitations.forEach(l => {
+      html += `<span class="limit-tag">⚠️ ${escHtml(l)}</span>`;
+    });
+    html += `</div>`;
+  }
+
+  if (elapsed) {
+    html += `<p class="text-xs text-gray-400 mt-2">⏱ ${escHtml(elapsed)}s</p>`;
+  }
+
+  inner.innerHTML = html;
+  scrollChat();
+}
+
+function scrollChat() {
+  const c = document.getElementById('chat-messages');
+  c.scrollTop = c.scrollHeight;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Agent thinking bar
+// ══════════════════════════════════════════════════════════════════════
+const AGENT_ORDER = ['Accident SQL Agent', 'Accident Answer Writer'];
+
+function showThinkingBar() {
+  document.getElementById('thinking-bar').classList.remove('hidden');
+}
+
+function hideThinkingBar() {
+  setTimeout(() => {
+    document.getElementById('thinking-bar').classList.add('hidden');
+    document.getElementById('elapsed-label').classList.add('hidden');
+  }, 2000);
+}
+
+function resetStepPills() {
+  const container = document.getElementById('step-pills');
+  container.innerHTML = '';
+  AGENT_ORDER.forEach(name => {
+    const pill = document.createElement('div');
+    pill.className = 'step-pill idle';
+    pill.id = `pill-${name.replace(/\s/g, '-')}`;
+    pill.innerHTML = `${getAgentIcon(name)} ${escHtml(name)}`;
+    container.appendChild(pill);
+  });
+}
+
+function updateStepPill(agentName, icon, status, message) {
+  const id = `pill-${agentName.replace(/\s/g, '-')}`;
+  let pill = document.getElementById(id);
+  if (!pill) {
+    // Create dynamically if not pre-rendered
+    const container = document.getElementById('step-pills');
+    pill = document.createElement('div');
+    pill.id = id;
+    container.appendChild(pill);
+  }
+  pill.className = `step-pill ${status}`;
+  const statusIcon = status === 'running' ? '<div class="spinner" style="width:12px;height:12px;border-width:2px"></div>' : (status === 'done' ? '✓' : '✗');
+  pill.innerHTML = `${statusIcon} ${escHtml(agentName)}${message ? ` <span class="text-xs opacity-70">— ${escHtml(message.substring(0, 30))}</span>` : ''}`;
+}
+
+function finishStepPills() {
+  document.querySelectorAll('.step-pill.running').forEach(p => {
+    p.className = 'step-pill done';
+  });
+}
+
+function getAgentIcon(name) {
+  if (name.includes('SQL')) return '🗄️';
+  if (name.includes('Answer') || name.includes('Writer')) return '📋';
+  return '🤖';
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Right panel
+// ══════════════════════════════════════════════════════════════════════
+function updateRightPanel(rawData, limitations, tools) {
+  currentRawData = rawData || '';
+
+  // Raw tab
+  const rawEl = document.getElementById('tab-raw');
+  if (rawData && rawData.trim()) {
+    rawEl.innerHTML = `<pre class="raw-data text-xs text-gray-700">${escHtml(rawData)}</pre>`;
+  } else {
+    rawEl.innerHTML = '<p class="text-xs text-gray-400 italic">ไม่มีข้อมูลดิบ</p>';
+  }
+
+  // Limits tab
+  const limitsEl = document.getElementById('dynamic-limits');
+  limitsEl.innerHTML = '';
+  if (limitations && limitations.length > 0) {
+    limitations.forEach(l => {
+      const span = document.createElement('div');
+      span.className = 'limit-tag';
+      span.textContent = '⚠️ ' + l;
+      limitsEl.appendChild(span);
+    });
+  }
+
+  // Tools tab
+  const toolsEl = document.getElementById('tab-tools');
+  if (tools && tools.length > 0) {
+    toolsEl.innerHTML = `
+      <p class="text-xs font-semibold text-gray-600 mb-2">Tools used:</p>
+      <div class="space-y-1">
+        ${tools.map(t => `<div class="text-xs bg-green-50 text-green-700 border border-green-200 rounded px-2 py-1">✓ ${escHtml(t)}</div>`).join('')}
+      </div>
+    `;
+  } else {
+    toolsEl.innerHTML = '<p class="text-xs text-gray-400 italic">ไม่มีข้อมูล tools</p>';
+  }
+}
+
+function clearRightPanel() {
+  document.getElementById('tab-raw').innerHTML = '<p class="text-xs text-gray-400 italic">กำลังดึงข้อมูล...</p>';
+  document.getElementById('dynamic-limits').innerHTML = '';
+  document.getElementById('tab-tools').innerHTML = '<p class="text-xs text-gray-400 italic">กำลังประมวลผล...</p>';
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+  document.getElementById(`tab-${tab}`).classList.remove('hidden');
+  document.querySelectorAll('#right-tabs .tab-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+}
+
+function toggleRightPanel() {
+  const panel = document.getElementById('right-panel');
+  const showBtn = document.getElementById('show-right-btn');
+  rightPanelVisible = !rightPanelVisible;
+  if (rightPanelVisible) {
+    panel.classList.remove('hidden');
+    showBtn.classList.add('hidden');
+  } else {
+    panel.classList.add('hidden');
+    showBtn.classList.remove('hidden');
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Quick SQL preview (no LLM)
+// ══════════════════════════════════════════════════════════════════════
+async function quickPreview(tool) {
+  const province = document.getElementById('province-select').value;
+  const district = document.getElementById('district-input').value.trim();
+  const yearStart = parseInt(document.getElementById('year-start').value) || 2021;
+  const yearEnd = parseInt(document.getElementById('year-end').value) || 2026;
+
+  // Switch to raw tab
+  switchTab('raw');
+  document.getElementById('tab-raw').innerHTML = '<p class="text-xs text-indigo-500">กำลังดึงข้อมูล...</p>';
+
+  try {
+    const body = { tool, province, district, year_start: yearStart, year_end: yearEnd, year: yearEnd, top_n: 10 };
+    const resp = await fetch('/api/accident-chat/quick', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const d = await resp.json();
+    if (resp.ok) {
+      document.getElementById('tab-raw').innerHTML =
+        `<p class="text-xs font-semibold text-gray-500 mb-1.5">[${escHtml(tool)}] ${escHtml(province || 'Zone 10')}</p>` +
+        `<pre class="raw-data text-xs text-gray-700">${escHtml(d.data || 'ไม่มีข้อมูล')}</pre>`;
+    } else {
+      document.getElementById('tab-raw').innerHTML =
+        `<p class="text-xs text-red-500">Error: ${escHtml(d.detail?.error || 'unknown')}</p>`;
+    }
+  } catch (err) {
+    document.getElementById('tab-raw').innerHTML = `<p class="text-xs text-red-500">ไม่สามารถเชื่อมต่อ: ${escHtml(err.message)}</p>`;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Loading state
+// ══════════════════════════════════════════════════════════════════════
+function setLoading(loading) {
+  isLoading = loading;
+  const btn = document.getElementById('send-btn');
+  const icon = document.getElementById('send-icon');
+  const label = document.getElementById('send-label');
+  const input = document.getElementById('question-input');
+  btn.disabled = loading;
+  input.disabled = loading;
+  if (loading) {
+    icon.innerHTML = '<div class="spinner" style="width:14px;height:14px;border-width:2px"></div>';
+    label.textContent = 'รอ...';
+  } else {
+    icon.textContent = '➤';
+    label.textContent = 'ส่ง';
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Resize handle
+// ══════════════════════════════════════════════════════════════════════
+function initResizeHandle() {
+  const handle = document.getElementById('resize-handle');
+  const leftPanel = document.getElementById('left-panel');
+  let dragging = false;
+  let startX = 0;
+  let startW = 0;
+
+  handle.addEventListener('mousedown', e => {
+    dragging = true;
+    startX = e.clientX;
+    startW = leftPanel.offsetWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const delta = e.clientX - startX;
+    const newW = Math.max(180, Math.min(420, startW + delta));
+    leftPanel.style.width = newW + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    dragging = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// Markdown renderer (lightweight)
+// ══════════════════════════════════════════════════════════════════════
+function renderMarkdown(text) {
+  if (!text) return '';
+  let html = escHtml(text);
+
+  // Code blocks
+  html = html.replace(/```[\w]*\n?([\s\S]*?)```/g, (_, code) =>
+    `<pre><code>${code}</code></pre>`);
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Bold
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Italic
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // H3
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  // H2
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  // H1
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+  // Horizontal rule
+  html = html.replace(/^---+$/gm, '<hr class="border-gray-200 my-2"/>');
+
+  // Tables
+  html = html.replace(/((?:\|.+\|\n?)+)/g, block => {
+    const lines = block.trim().split('\n').filter(l => l.trim());
+    if (lines.length < 2) return block;
+    let tableHtml = '<table>';
+    lines.forEach((line, i) => {
+      if (/^\|[-\s|:]+\|$/.test(line.trim())) return; // separator row
+      const cells = line.split('|').filter((_, ci) => ci > 0 && ci < line.split('|').length - 1);
+      const tag = i === 0 ? 'th' : 'td';
+      tableHtml += '<tr>' + cells.map(c => `<${tag}>${c.trim()}</${tag}>`).join('') + '</tr>';
+    });
+    tableHtml += '</table>';
+    return tableHtml;
+  });
+
+  // Blockquotes
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
+
+  // Unordered list
+  html = html.replace(/^([*\-]) (.+)$/gm, '<li>$2</li>');
+  html = html.replace(/(<li>[\s\S]*?<\/li>)+/g, m => `<ul>${m}</ul>`);
+
+  // Ordered list
+  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+  // Line breaks
+  html = html.replace(/\n\n+/g, '</p><p>');
+  html = html.replace(/\n/g, '<br/>');
+  html = `<p>${html}</p>`;
+
+  // Clean up empty paragraphs / double wraps
+  html = html.replace(/<p>(<(?:h[123]|ul|ol|table|pre|blockquote|hr))/g, '$1');
+  html = html.replace(/(<\/(?:h[123]|ul|ol|table|pre|blockquote|hr)>)<\/p>/g, '$1');
+  html = html.replace(/<p><\/p>/g, '');
+  html = html.replace(/<p><br\/><\/p>/g, '');
+
+  return html;
+}
+
+function escHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+</script>
+</body>
+</html>

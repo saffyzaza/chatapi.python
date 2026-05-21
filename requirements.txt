@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+crewai[google-genai]
+python-dotenv
+minio
+pandas
+psycopg2-binary
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+tavily-python>=0.5.0

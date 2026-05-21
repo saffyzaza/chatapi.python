@@ -1,0 +1,820 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Citation & Evidence Agent Test UI</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { font-size: 2em; margin-bottom: 10px; }
+        .header p { opacity: 0.9; }
+        .tabs {
+            display: flex;
+            background: #f5f5f5;
+            border-bottom: 2px solid #ddd;
+        }
+        .tab {
+            flex: 1;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            background: #f5f5f5;
+            border: none;
+            font-size: 1em;
+            transition: all 0.3s;
+        }
+        .tab:hover { background: #e0e0e0; }
+        .tab.active {
+            background: white;
+            border-bottom: 3px solid #667eea;
+            font-weight: bold;
+        }
+        .tab-content {
+            display: none;
+            padding: 30px;
+        }
+        .tab-content.active { display: block; }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        .input-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+        .input-group input, .input-group textarea, .input-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 1em;
+            transition: border-color 0.3s;
+        }
+        .input-group input:focus, .input-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .input-group textarea { min-height: 100px; resize: vertical; }
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .result-box {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f9f9f9;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+        .result-box h3 {
+            margin-bottom: 15px;
+            color: #667eea;
+        }
+        .result-box pre {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+        .citation-item {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 6px;
+            border-left: 4px solid #4CAF50;
+        }
+        .citation-code {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .evidence-item {
+            background: #fff3cd;
+            padding: 12px;
+            margin: 8px 0;
+            border-radius: 6px;
+            border-left: 4px solid #ffc107;
+        }
+        .trust-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+        .trust-high { background: #4CAF50; color: white; }
+        .trust-medium { background: #FF9800; color: white; }
+        .trust-low { background: #f44336; color: white; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .card h4 {
+            margin-bottom: 15px;
+            color: #667eea;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-ok { background: #4CAF50; }
+        .status-error { background: #f44336; }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 Citation & Evidence Agent Test UI</h1>
+            <p>Test the 7-agent pipeline with evidence tracking, citation generation, and RAG integration</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('chat')">💬 Chat Test</button>
+            <button class="tab" onclick="switchTab('evidence')">📚 Evidence API</button>
+            <button class="tab" onclick="switchTab('documents')">📄 Documents</button>
+            <button class="tab" onclick="switchTab('health')">🏥 Health Check</button>
+        </div>
+
+        <!-- Tab 1: Chat Test -->
+        <div id="chat" class="tab-content active">
+            <h2>Test Agent Pipeline with Citations</h2>
+            <div class="input-group">
+                <label>Message (ภาษาไทย):</label>
+                <textarea id="chatMessage" placeholder="ตัวอย่าง: สถิติอุบัติเหตุจังหวัดเชียงใหม่ปี 2025"></textarea>
+            </div>
+            <button class="btn" onclick="testChat()">🚀 Send to Agent Pipeline</button>
+            <div id="chatResult"></div>
+        </div>
+
+        <!-- Tab 2: Evidence API -->
+        <div id="evidence" class="tab-content">
+            <h2>Evidence & Citation APIs</h2>
+            <div class="grid">
+                <div class="card">
+                    <h4>Get Evidence by ID</h4>
+                    <div class="input-group">
+                        <label>Evidence ID:</label>
+                        <input type="text" id="evidenceId" placeholder="EV-001">
+                    </div>
+                    <button class="btn" onclick="getEvidence()">Get Evidence</button>
+                </div>
+
+                <div class="card">
+                    <h4>Session Evidence</h4>
+                    <div class="input-group">
+                        <label>Session ID:</label>
+                        <input type="text" id="sessionId" placeholder="test-session-123">
+                    </div>
+                    <button class="btn" onclick="getSessionEvidence()">Get Session Evidence</button>
+                    <button class="btn" onclick="getSessionCoverage()" style="margin-top: 10px;">Get Coverage Report</button>
+                </div>
+
+                <div class="card">
+                    <h4>Open Document</h4>
+                    <div class="input-group">
+                        <label>Document ID:</label>
+                        <input type="text" id="docId" placeholder="1">
+                    </div>
+                    <div class="input-group">
+                        <label>Page (optional):</label>
+                        <input type="number" id="docPage" placeholder="12">
+                    </div>
+                    <button class="btn" onclick="openDocument()">Open Document</button>
+                </div>
+            </div>
+            <div id="evidenceResult"></div>
+        </div>
+
+        <!-- Tab 3: Documents -->
+        <div id="documents" class="tab-content" style="padding:0;">
+
+            <!-- Toolbar -->
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;background:#f8f9fa;border-bottom:1px solid #e0e0e0;gap:10px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-weight:700;font-size:1em;color:#333;">📦 MinIO — uploads</span>
+                    <span id="treeFileCount" style="font-size:.78em;background:#e8eaf6;color:#3949ab;padding:2px 8px;border-radius:10px;"></span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <div id="ingestStatus" style="font-size:.85em;"></div>
+                    <button class="btn" style="padding:8px 16px;font-size:.88em;background:#f0f0f0;color:#333;border:1.5px solid #ccc;" onclick="syncMinioTree()">🔄 Sync</button>
+                    <button class="btn" id="ingestBtn" style="padding:8px 16px;font-size:.88em;" onclick="ingestDocuments()">⬆ Scan &amp; Ingest All</button>
+                    <button class="btn" style="padding:8px 16px;font-size:.88em;background:#e8f5e9;color:#2e7d32;border:1.5px solid #a5d6a7;" onclick="generateAllApa()">📝 APA List</button>
+                </div>
+            </div>
+
+            <!-- Split pane: tree left + viewer right -->
+            <div style="display:flex;height:calc(100vh - 260px);min-height:500px;">
+
+                <!-- LEFT: File Tree -->
+                <div id="treePanel" style="width:280px;min-width:180px;max-width:420px;border-right:1px solid #e0e0e0;overflow-y:auto;background:#fafafa;flex-shrink:0;">
+                    <div id="treeRoot" style="padding:8px 0;font-size:.88em;">
+                        <div style="padding:30px;text-align:center;color:#bbb;"><div class="loading" style="display:inline-block"></div></div>
+                    </div>
+                </div>
+
+                <!-- Resize handle -->
+                <div id="treeResizer" style="width:5px;cursor:col-resize;background:#e8e8e8;flex-shrink:0;transition:background .15s;" onmouseenter="this.style.background='#667eea'" onmouseleave="this.style.background='#e8e8e8'"></div>
+
+                <!-- RIGHT: File Viewer -->
+                <div id="viewerPanel" style="flex:1;overflow:hidden;display:flex;flex-direction:column;background:#fff;">
+
+                    <!-- Viewer toolbar -->
+                    <div id="viewerToolbar" style="padding:10px 16px;border-bottom:1px solid #eee;background:#f9f9f9;display:flex;align-items:center;justify-content:space-between;min-height:46px;">
+                        <span id="viewerPath" style="font-size:.82em;color:#888;font-family:monospace;">Select a file from the tree</span>
+                        <div id="viewerActions" style="display:flex;gap:6px;"></div>
+                    </div>
+
+                    <!-- File metadata strip -->
+                    <div id="viewerMeta" style="display:none;padding:10px 16px;background:#f0f4ff;border-bottom:1px solid #dde;font-size:.82em;color:#444;flex-wrap:wrap;gap:12px;align-items:center;"></div>
+
+                    <!-- APA citation strip -->
+                    <div id="viewerApa" style="display:none;padding:8px 16px;background:#fffde7;border-bottom:1px solid #f9e;font-size:.8em;color:#555;font-style:italic;font-family:Georgia,serif;"></div>
+
+                    <!-- Content area -->
+                    <div id="viewerContent" style="flex:1;overflow-y:auto;padding:20px 24px;">
+                        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#ccc;">
+                            <div style="font-size:3em;">📂</div>
+                            <div style="margin-top:10px;font-size:.95em;">Select a file to view its content</div>
+                        </div>
+                    </div>
+
+                    <!-- APA full list (generate all) -->
+                    <div id="allApaResult" style="padding:16px 24px;display:none;overflow-y:auto;max-height:300px;border-top:1px solid #eee;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 4: Health Check -->
+        <div id="health" class="tab-content">
+            <h2>System Health Check</h2>
+            <button class="btn" onclick="checkHealth()">🏥 Check System Health</button>
+            <div id="healthResult"></div>
+        </div>
+    </div>
+
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById(tabName).classList.add('active');
+            if (tabName === 'documents') syncMinioTree();
+        }
+
+        async function testChat() {
+            const message = document.getElementById('chatMessage').value;
+            if (!message) return alert('กรุณาใส่ข้อความ');
+
+            const resultDiv = document.getElementById('chatResult');
+            resultDiv.innerHTML = '<div class="result-box"><div class="loading"></div> Processing with 7-agent pipeline...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/chat`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
+                });
+
+                const data = await response.json();
+                
+                let html = '<div class="result-box">';
+                html += '<h3>📊 Agent Response</h3>';
+                html += `<p><strong>Pipeline:</strong> ${data.metadata?.pipeline || 'N/A'}</p>`;
+                html += `<p><strong>Agents:</strong> ${data.metadata?.agent_count || 0}</p>`;
+                html += `<p><strong>Time:</strong> ${data.metadata?.elapsed_seconds?.toFixed(1) || 0}s</p>`;
+                html += `<p><strong>Citations:</strong> ${data.citations?.length || 0}</p>`;
+                html += `<p><strong>Evidence:</strong> ${data.metadata?.total_evidence || 0}</p>`;
+                html += `<p><strong>Coverage Score:</strong> ${((data.metadata?.coverage_score || 0) * 100).toFixed(0)}%</p>`;
+                
+                if (data.citations && data.citations.length > 0) {
+                    html += '<h4 style="margin-top: 20px;">📚 Citations</h4>';
+                    data.citations.forEach(c => {
+                        html += `<div class="citation-item">
+                            <span class="citation-code">${c.citation_code}</span>
+                            <strong>${c.source_ref}</strong><br>
+                            <small>${c.citation_text}</small>
+                        </div>`;
+                    });
+                }
+
+                if (data.charts && data.charts.length > 0) {
+                    html += `<h4 style="margin-top: 20px;">📈 Charts: ${data.charts.length}</h4>`;
+                    data.charts.forEach(ch => {
+                        html += `<div class="evidence-item">
+                            <strong>${ch.title}</strong><br>
+                            <small>Source: ${ch.source_note || 'N/A'}</small>
+                        </div>`;
+                    });
+                }
+
+                html += '<h4 style="margin-top: 20px;">📝 Full Response</h4>';
+                html += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+                html += '</div>';
+
+                resultDiv.innerHTML = html;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-box"><h3 style="color: red;">❌ Error</h3><pre>${error.message}</pre></div>`;
+            }
+        }
+
+        async function getEvidence() {
+            const evidenceId = document.getElementById('evidenceId').value;
+            if (!evidenceId) return alert('กรุณาใส่ Evidence ID');
+
+            const resultDiv = document.getElementById('evidenceResult');
+            resultDiv.innerHTML = '<div class="result-box"><div class="loading"></div> Loading...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/evidence/${evidenceId}`);
+                const data = await response.json();
+
+                let html = '<div class="result-box"><h3>Evidence Item</h3>';
+                html += `<div class="evidence-item">
+                    <strong>ID:</strong> ${data.evidence_id}<br>
+                    <strong>Type:</strong> ${data.evidence_type}<br>
+                    <strong>Source:</strong> ${data.source_ref}<br>
+                    <strong>Trust Level:</strong> <span class="trust-badge trust-${data.trust_level}">${data.trust_level}</span><br>
+                    ${data.page_ref ? `<strong>Page:</strong> ${data.page_ref}<br>` : ''}
+                    ${data.section_label ? `<strong>Section:</strong> ${data.section_label}<br>` : ''}
+                    <strong>Open URL:</strong> <a href="${API_BASE}${data.open_url}" target="_blank">${data.open_url}</a>
+                </div>`;
+                html += `<pre>${JSON.stringify(data, null, 2)}</pre></div>`;
+                resultDiv.innerHTML = html;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-box"><h3 style="color: red;">❌ Error</h3><pre>${error.message}</pre></div>`;
+            }
+        }
+
+        async function getSessionEvidence() {
+            const sessionId = document.getElementById('sessionId').value;
+            if (!sessionId) return alert('กรุณาใส่ Session ID');
+
+            const resultDiv = document.getElementById('evidenceResult');
+            resultDiv.innerHTML = '<div class="result-box"><div class="loading"></div> Loading...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/evidence/session/${sessionId}`);
+                const data = await response.json();
+
+                let html = '<div class="result-box">';
+                html += `<h3>Session Evidence (${data.evidence_count} items)</h3>`;
+                data.evidence.forEach(ev => {
+                    html += `<div class="evidence-item">
+                        <strong>${ev.evidence_id}</strong> — ${ev.source_ref}
+                        <span class="trust-badge trust-${ev.trust_level}">${ev.trust_level}</span>
+                    </div>`;
+                });
+                html += '</div>';
+                resultDiv.innerHTML = html;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-box"><h3 style="color: red;">❌ Error</h3><pre>${error.message}</pre></div>`;
+            }
+        }
+
+        async function getSessionCoverage() {
+            const sessionId = document.getElementById('sessionId').value;
+            if (!sessionId) return alert('กรุณาใส่ Session ID');
+
+            const resultDiv = document.getElementById('evidenceResult');
+            resultDiv.innerHTML = '<div class="result-box"><div class="loading"></div> Loading...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/evidence/session/${sessionId}/coverage`);
+                const data = await response.json();
+
+                let html = '<div class="result-box">';
+                html += '<h3>📊 Coverage Report</h3>';
+                html += `<p><strong>Total Claims:</strong> ${data.total_claims}</p>`;
+                html += `<p><strong>Supported:</strong> ${data.supported}</p>`;
+                html += `<p><strong>Partially Supported:</strong> ${data.partially_supported}</p>`;
+                html += `<p><strong>Insufficient:</strong> ${data.insufficient}</p>`;
+                html += `<p><strong>Coverage Score:</strong> ${(data.coverage_score * 100).toFixed(0)}%</p>`;
+                html += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+                html += '</div>';
+                resultDiv.innerHTML = html;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-box"><h3 style="color: red;">❌ Error</h3><pre>${error.message}</pre></div>`;
+            }
+        }
+
+        async function openDocument() {
+            const docId = document.getElementById('docId').value;
+            const page = document.getElementById('docPage').value;
+            if (!docId) return alert('กรุณาใส่ Document ID');
+
+            const url = `${API_BASE}/api/documents/open/${docId}${page ? '?page=' + page : ''}`;
+            window.open(url, '_blank');
+        }
+
+        // ---- Documents tab — Tree + Viewer ----
+        function escHtml(s) {
+            const d = document.createElement('div');
+            d.textContent = s || '';
+            return d.innerHTML;
+        }
+        function fmtSize(bytes) {
+            if (bytes == null) return '—';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KiB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MiB';
+        }
+        function fmtDate(iso) {
+            if (!iso) return '—';
+            const d = new Date(iso);
+            return d.toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'})
+                 + ' ' + d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
+        }
+
+        // -- Tree state --
+        const treeExpandedPaths = new Set();
+        let activeFilePath = null;
+
+        async function syncMinioTree() {
+            document.getElementById('treeRoot').innerHTML =
+                '<div style="padding:20px;text-align:center;color:#bbb;"><div class="loading" style="display:inline-block"></div> Syncing…</div>';
+            try {
+                const r = await fetch(`${API_BASE}/api/documents/minio/tree`);
+                if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+                const j = await r.json();
+                const count = j.total_files || 0;
+                document.getElementById('treeFileCount').textContent = count + ' file' + (count !== 1 ? 's' : '');
+                renderTree(j.tree || [], document.getElementById('treeRoot'), 0);
+            } catch (err) {
+                document.getElementById('treeRoot').innerHTML =
+                    `<div style="padding:16px;color:#c62828;font-size:.85em;">❌ ${escHtml(err.message)}</div>`;
+            }
+        }
+
+        function renderTree(nodes, container, depth) {
+            container.innerHTML = '';
+            if (!nodes.length) {
+                container.innerHTML = '<div style="padding:10px 16px;color:#bbb;font-size:.82em;">Empty</div>';
+                return;
+            }
+            // Sort: folders first, then files
+            const sorted = [...nodes].sort((a, b) => {
+                if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+                return a.name.localeCompare(b.name);
+            });
+            for (const node of sorted) {
+                container.appendChild(buildTreeNode(node, depth));
+            }
+        }
+
+        function buildTreeNode(node, depth) {
+            const wrap = document.createElement('div');
+            if (node.type === 'folder') {
+                const isOpen = treeExpandedPaths.has(node.path);
+                const row = document.createElement('div');
+                row.style.cssText = `display:flex;align-items:center;padding:5px 8px 5px ${8 + depth*16}px;cursor:pointer;border-radius:4px;gap:5px;user-select:none;`;
+                row.onmouseenter = () => row.style.background = '#efefef';
+                row.onmouseleave = () => row.style.background = '';
+                const arrow = document.createElement('span');
+                arrow.style.cssText = 'font-size:.65em;color:#888;width:10px;display:inline-block;transition:transform .15s;';
+                arrow.textContent = isOpen ? '▼' : '▶';
+                const icon = document.createElement('span');
+                icon.textContent = isOpen ? '📂' : '📁';
+                const label = document.createElement('span');
+                label.textContent = node.name;
+                label.style.cssText = 'font-weight:600;color:#333;font-size:.88em;';
+                // File count badge
+                const fileCount = (node.children || []).filter(c => c.type === 'file').length;
+                const folderCount = (node.children || []).filter(c => c.type === 'folder').length;
+                if (fileCount || folderCount) {
+                    const badge = document.createElement('span');
+                    badge.style.cssText = 'font-size:.7em;color:#888;margin-left:auto;padding-right:4px;';
+                    badge.textContent = (folderCount ? folderCount + '📁 ' : '') + (fileCount ? fileCount + ' file' + (fileCount !== 1 ? 's' : '') : '');
+                    row.append(arrow, icon, label, badge);
+                } else {
+                    row.append(arrow, icon, label);
+                }
+                const childWrap = document.createElement('div');
+                childWrap.style.display = isOpen ? 'block' : 'none';
+                if (isOpen && node.children) renderTree(node.children, childWrap, depth + 1);
+                row.onclick = () => {
+                    const open = childWrap.style.display !== 'none';
+                    if (open) {
+                        childWrap.style.display = 'none';
+                        arrow.textContent = '▶';
+                        icon.textContent = '📁';
+                        treeExpandedPaths.delete(node.path);
+                    } else {
+                        childWrap.style.display = 'block';
+                        arrow.textContent = '▼';
+                        icon.textContent = '📂';
+                        treeExpandedPaths.add(node.path);
+                        if (!childWrap.hasChildNodes() && node.children) {
+                            renderTree(node.children, childWrap, depth + 1);
+                        }
+                    }
+                };
+                wrap.append(row, childWrap);
+            } else {
+                // File node
+                const extIcon = {pdf:'📄',docx:'📝',txt:'📃',md:'📋'}[node.ext] || '📄';
+                const st = node.ingestion_status || 'not_registered';
+                const stDot = st === 'completed' ? '🟢' : st === 'failed' ? '🔴' : st === 'processing' ? '🟡' : '⚪';
+                const row = document.createElement('div');
+                const isActive = activeFilePath === node.path;
+                row.style.cssText = `display:flex;align-items:center;padding:5px 8px 5px ${8 + depth*16}px;cursor:pointer;border-radius:4px;gap:5px;user-select:none;${isActive ? 'background:#e8eaf6;font-weight:600;' : ''}`;
+                row.onmouseenter = () => { if (activeFilePath !== node.path) row.style.background = '#f0f0f0'; };
+                row.onmouseleave = () => { if (activeFilePath !== node.path) row.style.background = ''; };
+                const iconSpan = document.createElement('span');
+                iconSpan.style.cssText = 'width:10px;display:inline-block;';
+                const fileIcon = document.createElement('span');
+                fileIcon.textContent = extIcon;
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = node.name;
+                nameSpan.style.cssText = 'font-size:.86em;color:#333;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+                const dotSpan = document.createElement('span');
+                dotSpan.textContent = stDot;
+                dotSpan.title = st;
+                dotSpan.style.cssText = 'font-size:.65em;margin-left:auto;flex-shrink:0;';
+                row.append(iconSpan, fileIcon, nameSpan, dotSpan);
+                row.onclick = () => openFileInViewer(node);
+                wrap.appendChild(row);
+            }
+            return wrap;
+        }
+
+        async function openFileInViewer(node) {
+            activeFilePath = node.path;
+            // Re-render tree to show active highlight (just update styles)
+            document.querySelectorAll('#treeRoot [data-path]').forEach(el => {
+                el.style.background = el.dataset.path === node.path ? '#e8eaf6' : '';
+            });
+
+            // Toolbar
+            document.getElementById('viewerPath').textContent = node.path;
+            const st = node.ingestion_status || 'not_registered';
+
+            // Build action buttons
+            const actionsEl = document.getElementById('viewerActions');
+            actionsEl.innerHTML = '';
+            if (node.document_id) {
+                const openBtn = document.createElement('a');
+                openBtn.href = `${API_BASE}/api/documents/open/${node.document_id}`;
+                openBtn.target = '_blank';
+                openBtn.textContent = '🔗 Open';
+                openBtn.style.cssText = 'font-size:.8em;color:#667eea;padding:4px 10px;border:1px solid #c5cae9;border-radius:4px;text-decoration:none;background:#fff;';
+                actionsEl.appendChild(openBtn);
+            }
+            if (node.apa_citation) {
+                const apaBtn = document.createElement('button');
+                apaBtn.textContent = '📋 Copy APA';
+                apaBtn.style.cssText = 'font-size:.8em;padding:4px 10px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff;';
+                apaBtn.onclick = () => copyApaText(node.apa_citation);
+                actionsEl.appendChild(apaBtn);
+            }
+            if (st === 'not_registered' || st === 'failed') {
+                const ingestBtn = document.createElement('button');
+                ingestBtn.textContent = st === 'failed' ? '🔄 Re-ingest' : '⬆ Ingest';
+                ingestBtn.style.cssText = 'font-size:.8em;padding:4px 10px;border:1px solid #e65100;color:#e65100;border-radius:4px;cursor:pointer;background:#fff3e0;';
+                ingestBtn.onclick = () => node.document_id ? reingestDoc(node.document_id) : ingestDocuments();
+                actionsEl.appendChild(ingestBtn);
+            }
+
+            // Metadata strip
+            const metaEl = document.getElementById('viewerMeta');
+            metaEl.style.display = 'flex';
+            const stBadge = st === 'completed'
+                ? `<span style="background:#e8f5e9;color:#2e7d32;padding:1px 8px;border-radius:10px;font-weight:600;">✅ ${node.chunk_count} chunks embedded</span>`
+                : st === 'failed'
+                ? `<span style="background:#ffebee;color:#c62828;padding:1px 8px;border-radius:10px;font-weight:600;">❌ Embedding failed</span>`
+                : st === 'processing'
+                ? `<span style="background:#fff8e1;color:#e65100;padding:1px 8px;border-radius:10px;font-weight:600;">⏳ Processing…</span>`
+                : `<span style="background:#f3f3f3;color:#888;padding:1px 8px;border-radius:10px;">⚪ Not ingested</span>`;
+            metaEl.innerHTML = [
+                `<strong>${escHtml(node.title || node.name)}</strong>`,
+                `<span style="color:#888;">📦 ${escHtml(node.path)}</span>`,
+                `<span>${fmtSize(node.size)}</span>`,
+                `<span>${fmtDate(node.last_modified)}</span>`,
+                stBadge,
+            ].join('<span style="color:#ddd;margin:0 4px;">|</span>');
+
+            // APA strip
+            const apaEl = document.getElementById('viewerApa');
+            if (node.apa_citation) {
+                apaEl.style.display = 'block';
+                apaEl.innerHTML = `<span style="color:#888;font-style:normal;font-size:.78em;margin-right:6px;">APA:</span>${escHtml(node.apa_citation)}`;
+            } else {
+                apaEl.style.display = 'none';
+            }
+
+            // Load content
+            const contentEl = document.getElementById('viewerContent');
+            contentEl.innerHTML = '<div style="padding:30px;text-align:center;color:#bbb;"><div class="loading" style="display:inline-block"></div> Loading content…</div>';
+
+            try {
+                const r = await fetch(`${API_BASE}/api/documents/minio/read?path=${encodeURIComponent(node.path)}`);
+                if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+                const data = await r.json();
+
+                let html = '';
+                if (node.ext === 'pdf' || node.ext === 'docx') {
+                    // Rendered paragraphs
+                    const paras = (data.preview || '').split(/\n{2,}/).filter(p => p.trim());
+                    html = '<div style="max-width:760px;line-height:1.75;font-size:.92em;color:#333;">';
+                    html += paras.map(p => `<p style="margin-bottom:1em;">${escHtml(p.trim())}</p>`).join('');
+                    html += '</div>';
+                } else {
+                    // Plain text / markdown
+                    html = `<pre style="font-family:'Courier New',monospace;font-size:.84em;line-height:1.65;white-space:pre-wrap;color:#333;margin:0;">${escHtml(data.preview || '(empty)')}</pre>`;
+                }
+
+                if (data.truncated) {
+                    html += `<div style="margin-top:16px;padding:8px 14px;background:#fff8e1;border-radius:6px;font-size:.8em;color:#e65100;">⚠ Showing first 8,000 chars — ${(data.total_chars||0).toLocaleString()} chars total</div>`;
+                }
+                contentEl.innerHTML = html;
+            } catch (err) {
+                contentEl.innerHTML = `<div style="padding:20px;color:#c62828;">❌ ${escHtml(err.message)}</div>`;
+            }
+        }
+
+        // -- Resize handle for tree panel --
+        (function() {
+            const resizer = document.getElementById('treeResizer');
+            if (!resizer) return;
+            let dragging = false, startX = 0, startW = 0;
+            resizer.addEventListener('mousedown', e => {
+                dragging = true; startX = e.clientX;
+                startW = document.getElementById('treePanel').offsetWidth;
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+            });
+            document.addEventListener('mousemove', e => {
+                if (!dragging) return;
+                const w = Math.max(150, Math.min(500, startW + (e.clientX - startX)));
+                document.getElementById('treePanel').style.width = w + 'px';
+            });
+            document.addEventListener('mouseup', () => {
+                dragging = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+            });
+        })();
+
+        async function ingestDocuments() {
+            const btn = document.getElementById('ingestBtn');
+            const statusEl = document.getElementById('ingestStatus');
+            btn.disabled = true;
+            statusEl.innerHTML = '<div class="loading" style="display:inline-block"></div> Ingesting…';
+            try {
+                const response = await fetch(`${API_BASE}/api/ingest`, { method: 'POST' });
+                const data = await response.json();
+                const n = data.ingested_count ?? data.total_ingested ?? data.chunks_ingested ?? 0;
+                const c = data.total_chunks ?? data.chunks_ingested ?? 0;
+                statusEl.innerHTML = `<span style="color:#2e7d32;">✅ <strong>${n}</strong> file(s), <strong>${c}</strong> chunks</span>`;
+                syncMinioTree();
+            } catch (error) {
+                statusEl.innerHTML = `<span style="color:red;">❌ ${error.message}</span>`;
+            }
+            btn.disabled = false;
+        }
+
+        async function reingestDoc(id) {
+            if (!confirm(`Re-ingest document #${id}?`)) return;
+            try {
+                const r = await fetch(`${API_BASE}/api/documents/${id}/reingest`, { method: 'POST' });
+                const j = await r.json();
+                if (!r.ok) throw new Error(j.detail || r.statusText);
+                alert(`✅ Re-ingested: ${j.chunks_ingested} chunks`);
+                syncMinioTree();
+            } catch (e) { alert('❌ ' + e.message); }
+        }
+
+        function copyApaText(apaText) {
+            navigator.clipboard.writeText(apaText).then(() => {
+                alert('📋 APA citation copied!');
+            }).catch(() => {
+                prompt('Copy APA citation:', apaText);
+            });
+        }
+
+        async function checkHealth() {
+            const resultDiv = document.getElementById('healthResult');
+            resultDiv.innerHTML = '<div class="result-box"><div class="loading"></div> Checking...</div>';
+
+            try {
+                const response = await fetch(`${API_BASE}/api/health`);
+                const data = await response.json();
+
+                let html = '<div class="result-box"><h3>System Health</h3>';
+                const pgOk = data.services?.postgres === 'ok';
+                const minioOk = data.services?.minio === 'ok';
+                html += `<p><span class="status-indicator ${pgOk ? 'status-ok' : 'status-error'}"></span> PostgreSQL: ${pgOk ? '✅ Connected' : '❌ ' + (data.services?.postgres || 'Error')}</p>`;
+                html += `<p><span class="status-indicator ${minioOk ? 'status-ok' : 'status-error'}"></span> MinIO: ${minioOk ? '✅ Connected' : '❌ ' + (data.services?.minio || 'Error')}</p>`;
+                const pgv = data.services?.pgvector;
+                html += `<p><span class="status-indicator ${pgv === 'ok' ? 'status-ok' : 'status-error'}"></span> pgvector: ${pgv === 'ok' ? '✅ Connected' : '❌ ' + (pgv || 'Error')}</p>`;
+                html += `<pre>${JSON.stringify(data, null, 2)}</pre></div>`;
+                resultDiv.innerHTML = html;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="result-box"><h3 style="color: red;">❌ Error</h3><pre>${error.message}</pre></div>`;
+            }
+        }
+
+        window.onload = () => {
+            console.log('Citation & Evidence Agent Test UI loaded');
+        };
+
+        async function generateAllApa() {
+            const el = document.getElementById('allApaResult');
+            el.style.display = 'block';
+            el.innerHTML = '<div class="loading" style="display:inline-block"></div> Generating…';
+            try {
+                const r = await fetch(`${API_BASE}/api/documents?per_page=100&status=completed`);
+                const j = await r.json();
+                if (!j.documents || !j.documents.length) {
+                    el.innerHTML = '<em style="color:#999;">No completed documents found.</em>';
+                    return;
+                }
+                let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><strong style="color:#444;">📚 APA 7th — ${j.documents.length} doc(s)</strong><button onclick="copyAllApa()" style="font-size:.8em;background:#eee;border:1px solid #ccc;border-radius:4px;padding:4px 10px;cursor:pointer;">📋 Copy All</button></div>`;
+                html += '<div id="apaListContainer">';
+                j.documents.forEach((d, i) => {
+                    const apa = d.apa_citation || d.title || '(unknown)';
+                    html += `<div class="citation-item" style="margin-bottom:8px;padding:8px 12px;background:#f9f9f9;border-left:3px solid #667eea;border-radius:0 5px 5px 0;font-family:Georgia,serif;font-size:.88em;"><span class="citation-code">[${i+1}]</span> ${escHtml(apa)}</div>`;
+                });
+                html += '</div>';
+                el.innerHTML = html;
+            } catch (e) {
+                el.innerHTML = `<span style="color:#c62828;">❌ ${e.message}</span>`;
+            }
+        }
+
+        function copyAllApa() {
+            const container = document.getElementById('apaListContainer');
+            if (!container) return;
+            const lines = Array.from(container.querySelectorAll('.citation-item')).map((el, i) => {
+                return `[${i+1}] ${el.textContent.replace(/^\[\d+\]\s*/, '')}`;
+            });
+            navigator.clipboard.writeText(lines.join('\n')).then(() => alert('📋 Copied!')).catch(() => prompt('Copy all APA:', lines.join('\n')));
+        }
+    </script>
+</body>
+</html>

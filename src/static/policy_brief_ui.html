@@ -1,0 +1,2348 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Musya Agent — Policy Brief UI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    /* ─── EXTRA: chat bubble copy btn ─── */
+    .msg-copy { display:none; }
+    .chat-msg:hover .msg-copy { display:inline-flex; }
+  </style>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap');
+    body { font-family: 'IBM Plex Sans Thai', sans-serif; }
+
+    /* Prose (Markdown) */
+    .prose h2 { font-size:1.15rem; font-weight:600; margin-top:1rem; margin-bottom:0.4rem; color:#134e4a; }
+    .prose h3 { font-size:1.05rem; font-weight:600; margin-top:0.8rem; margin-bottom:0.3rem; color:#1e3a5f; }
+    .prose ul,.prose ol { padding-left:1.5rem; margin:0.3rem 0; }
+    .prose li { margin:0.15rem 0; }
+    .prose p  { margin:0.3rem 0; }
+    .prose table { border-collapse:collapse; width:100%; margin:0.5rem 0; font-size:0.85rem; }
+    .prose th,.prose td { border:1px solid #d1d5db; padding:4px 8px; text-align:left; }
+    .prose th { background:#f0fdfa; font-weight:600; }
+    .prose blockquote { border-left:3px solid #0d9488; padding-left:0.75rem; color:#6b7280; font-style:italic; }
+    .prose code { background:#f1f5f9; padding:1px 4px; border-radius:4px; font-size:0.8rem; }
+
+    /* Animations */
+    .chat-bubble { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+    @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+    .loading-dots span { animation:pulse 1.4s infinite; }
+    .loading-dots span:nth-child(2) { animation-delay:0.2s; }
+    .loading-dots span:nth-child(3) { animation-delay:0.4s; }
+    .spin { animation:spin 1s linear infinite; display:inline-block; }
+
+    /* Charts */
+    .chart-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-top:10px; }
+    .chart-card canvas { height:300px !important; width:100% !important; }
+
+    /* Pipeline log */
+    #pipeline-log { font-family:monospace; font-size:0.75rem; background:#0f172a; color:#94a3b8;
+                    border-radius:0.75rem; padding:1rem; height:320px; overflow-y:auto; line-height:1.6; }
+    .log-start  { color:#f59e0b; }
+    .log-running{ color:#38bdf8; }
+    .log-done   { color:#4ade80; }
+    .log-error  { color:#f87171; }
+    .log-tool   { color:#c084fc; }
+    .log-warn   { color:#fbbf24; }
+
+    /* Province pills */
+    .province-btn { padding:0.35rem 0.85rem; border-radius:9999px; font-size:0.875rem; border:1.5px solid #e5e7eb;
+                    background:#f9fafb; color:#6b7280; cursor:pointer; transition:all 0.15s; }
+    .province-btn:hover { background:#f0fdfa; border-color:#99f6e4; color:#0d9488; }
+    .province-btn.active { background:#f0fdfa; border-color:#0d9488; border-width:2px; color:#0f766e; font-weight:600; }
+
+    /* Topic cards */
+    .topic-card { border-radius:0.75rem; padding:0.875rem; cursor:pointer; border:1.5px solid transparent;
+                  transition:all 0.15s; user-select:none; }
+    .topic-card.rti    { background:#fef2f2; border-color:#fecaca; }
+    .topic-card.mental { background:#fffbeb; border-color:#fde68a; }
+    .topic-card.ncd    { background:#ecfdf5; border-color:#a7f3d0; }
+    .topic-card.checked.rti    { border-color:#ef4444; border-width:2px; }
+    .topic-card.checked.mental { border-color:#f59e0b; border-width:2px; }
+    .topic-card.checked.ncd    { border-color:#10b981; border-width:2px; }
+
+    /* Result inner tabs */
+    .result-tab { padding:0.4rem 0.85rem; font-size:0.8rem; font-weight:500; color:#6b7280;
+                  border-bottom:2px solid transparent; cursor:pointer; transition:all 0.15s; }
+    .result-tab:hover { color:#374151; }
+    .result-tab.active { color:#0f766e; border-bottom-color:#0d9488; }
+
+    /* Agent nodes */
+    .agent-node { width:68px; height:68px; border-radius:0.75rem; border:2px solid;
+                  display:flex; flex-direction:column; align-items:center; justify-content:center;
+                  font-size:0.65rem; font-weight:600; transition:all 0.3s; text-align:center; }
+    .agent-node.waiting { background:#f9fafb; border-color:#d1d5db; color:#9ca3af; }
+    .agent-node.running { background:#f0fdfa; border-color:#0d9488; color:#0f766e; }
+    .agent-node.done    { background:#f0fdf4; border-color:#22c55e; color:#16a34a; }
+    .agent-node.error   { background:#fef2f2; border-color:#ef4444; color:#dc2626; }
+    .agent-node.skipped { background:#f9fafb; border-color:#e5e7eb; color:#d1d5db; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width:6px; }
+    ::-webkit-scrollbar-thumb { background:#cbd5e1; border-radius:3px; }
+
+    /* Progress bar */
+    #progress-bar { transition:width 0.5s ease; }
+
+    /* Tool result box */
+    .tool-result { background:#f8fafc; border:1px solid #e2e8f0; border-radius:0.5rem;
+                   padding:0.75rem; font-family:monospace; font-size:0.75rem; max-height:200px;
+                   overflow-y:auto; white-space:pre-wrap; color:#374151; }
+
+    /* Quick action tags */
+    .quick-q { background:#f0fdfa; border:1px solid #99f6e4; color:#0f766e; padding:0.3rem 0.7rem;
+               border-radius:9999px; font-size:0.75rem; cursor:pointer; transition:all 0.15s; }
+    .quick-q:hover { background:#ccfbf1; }
+    .quick-q.short { background:#fff7ed; border-color:#fed7aa; color:#c2410c; }
+    .quick-q.short:hover { background:#ffedd5; }
+
+    /* Chat mode toggle */
+    .mode-toggle { display:flex; gap:4px; background:#f1f5f9; border-radius:9999px; padding:3px; }
+    .mode-btn { padding:0.25rem 0.75rem; border-radius:9999px; font-size:0.75rem; font-weight:600;
+                border:none; cursor:pointer; transition:all 0.2s; color:#64748b; background:transparent; }
+    .mode-btn.active-full { background:#0d9488; color:#fff; box-shadow:0 1px 3px rgba(0,0,0,0.15); }
+    .mode-btn.active-short { background:#f97316; color:#fff; box-shadow:0 1px 3px rgba(0,0,0,0.15); }
+    .mode-badge-full  { display:inline-flex; align-items:center; gap:4px; font-size:0.65rem;
+                        background:#f0fdfa; color:#0f766e; border:1px solid #99f6e4;
+                        padding:2px 8px; border-radius:9999px; font-weight:600; }
+    .mode-badge-short { display:inline-flex; align-items:center; gap:4px; font-size:0.65rem;
+                        background:#fff7ed; color:#c2410c; border:1px solid #fed7aa;
+                        padding:2px 8px; border-radius:9999px; font-weight:600; }
+
+    /* Agent timeline in loading bubble */
+    .agent-timeline { display:flex; flex-direction:column; gap:6px; margin-top:8px; }
+    .agent-step { display:flex; align-items:center; gap:8px; font-size:0.75rem; padding:4px 0; }
+    .agent-step .icon { width:20px; height:20px; border-radius:50%; display:flex; align-items:center;
+                        justify-content:center; font-size:10px; flex-shrink:0; }
+    .agent-step.waiting .icon { background:#f3f4f6; color:#9ca3af; }
+    .agent-step.running .icon { background:#dbeafe; color:#2563eb; animation:pulse 1s infinite; }
+    .agent-step.done .icon    { background:#dcfce7; color:#16a34a; }
+    .agent-step.error .icon   { background:#fee2e2; color:#dc2626; }
+    .agent-step .name { color:#374151; font-weight:500; }
+    .agent-step.waiting .name { color:#9ca3af; }
+    .agent-step .time { color:#9ca3af; font-size:0.65rem; margin-left:auto; }
+    .agent-step .msg  { color:#6b7280; font-size:0.65rem; }
+
+    /* ─── Inline citation tooltips ─── */
+    .citation-tooltip-wrapper {
+      position: relative;
+      display: inline;
+    }
+    .citation-inline {
+      color: #0d9488;
+      font-weight: 600;
+      font-size: 0.85em;
+      background: #f0fdfa;
+      padding: 0 3px;
+      border-radius: 3px;
+      border-bottom: 1px dashed #0d9488;
+    }
+    .citation-tooltip-wrapper:hover .citation-inline {
+      background: #ccfbf1;
+    }
+    .citation-tooltip {
+      display: none;
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      color: #f1f5f9;
+      font-size: 0.7rem;
+      line-height: 1.4;
+      padding: 8px 12px;
+      border-radius: 8px;
+      white-space: normal;
+      width: max-content;
+      max-width: 360px;
+      z-index: 50;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      margin-bottom: 6px;
+      pointer-events: none;
+    }
+    .citation-tooltip::after {
+      content: '';
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: #1e293b;
+    }
+    .citation-tooltip-wrapper:hover .citation-tooltip {
+      display: block;
+      pointer-events: auto;
+    }
+    .citation-tooltip-link {
+      color: #5eead4;
+      font-weight: 500;
+      margin-top: 4px;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+
+<!-- ============================= HEADER ============================= -->
+<header class="bg-white border-b border-gray-200 sticky top-0 z-10">
+  <div class="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-lg flex items-center justify-center text-white font-bold text-sm">M</div>
+      <div>
+        <h1 class="text-lg font-bold text-gray-800">Musya Agent Test UI</h1>
+        <p class="text-xs text-gray-400">Phase 3 — Policy Brief</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <div id="health-badge" class="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-gray-100 text-gray-400">
+        <span class="w-2 h-2 rounded-full bg-gray-300"></span> Checking...
+      </div>
+      <button onclick="switchTab('chat')"     id="tab-chat"     class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium bg-teal-50 text-teal-700">💬 Chat</button>
+      <button onclick="switchTab('policy')"   id="tab-policy"   class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium text-gray-500 hover:bg-gray-100">Policy</button>
+      <button onclick="switchTab('pipeline')" id="tab-pipeline" class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium text-gray-500 hover:bg-gray-100">Pipeline</button>
+      <button onclick="switchTab('tools')"    id="tab-tools"    class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium text-gray-500 hover:bg-gray-100">Tools</button>
+      <button onclick="switchTab('data')"     id="tab-data"     class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium text-gray-500 hover:bg-gray-100">Data</button>
+      <button onclick="switchTab('refs')"     id="tab-refs"     class="tab-btn text-sm px-3 py-1.5 rounded-lg font-medium text-gray-500 hover:bg-gray-100">📚 เอกสาร</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 py-5">
+
+<!-- ========================= TAB 0: CHAT ========================= -->
+<div id="panel-chat" class="panel hidden" style="height:calc(100vh - 80px); display:none; flex-direction:column;">
+
+  <!-- Quick prompts (mode-aware) -->
+  <div id="quick-prompts-full" class="flex flex-wrap gap-2 px-1 pt-1 pb-3">
+    <button onclick="sendQuick('สถิติอุบัติเหตุจังหวัดอุบลราชธานี ปี 2024')" class="quick-q">สถิติอุบัติเหตุ อุบลฯ 2024</button>
+    <button onclick="sendQuick('จุดเสี่ยงอุบัติเหตุ 10 อันดับแรก')" class="quick-q">จุดเสี่ยง 10 อันดับ</button>
+    <button onclick="sendQuick('สร้าง policy brief สาธารณสุข จ.อุบลราชธานี เรื่อง RTI สุขภาพจิต และ NCD')" class="quick-q">Policy Brief อุบลฯ (RTI+MH+NCD)</button>
+    <button onclick="sendQuick('วิเคราะห์เชิงนโยบาย สุขภาพจิต จ.ยโสธร')" class="quick-q">นโยบายสุขภาพจิต ยโสธร</button>
+    <button onclick="sendQuick('แนวโน้มอุบัติเหตุรายปี เปรียบเทียบ 5 จังหวัดเขตสุขภาพที่ 10')" class="quick-q">แนวโน้ม เขต 10 (5 จังหวัด)</button>
+    <button onclick="sendQuick('รายงานตรวจราชการ จ.ศรีสะเกษ ครอบคลุม RTI โภชนาการ และ NCDs')" class="quick-q">ตรวจราชการ ศรีสะเกษ</button>
+  </div>
+  <div id="quick-prompts-short" class="flex flex-wrap gap-2 px-1 pt-1 pb-3 hidden">
+    <button onclick="sendQuick('จุดเสี่ยงอุบัติเหตุในอุบลราชธานีมีที่ไหนบ้าง')" class="quick-q short">จุดเสี่ยงอุบลฯ?</button>
+    <button onclick="sendQuick('สถิติอุบัติเหตุปี 2024 ลดหรือเพิ่มขึ้น')" class="quick-q short">อุบัติเหตุ 2024 ลด/เพิ่ม?</button>
+    <button onclick="sendQuick('จังหวัดไหนในเขต 10 มีอุบัติเหตุมากที่สุด')" class="quick-q short">จังหวัดไหนอุบัติเหตุมากสุด?</button>
+    <button onclick="sendQuick('NCD ในมุกดาหารเป็นอย่างไรบ้าง')" class="quick-q short">NCD มุกดาหาร?</button>
+    <button onclick="sendQuick('สุขภาพจิตเขต 10 มีแนวโน้มอย่างไร')" class="quick-q short">แนวโน้มสุขภาพจิตเขต 10?</button>
+    <button onclick="sendQuick('ระบบนี้ทำอะไรได้บ้าง')" class="quick-q short">ระบบนี้ทำอะไรได้?</button>
+  </div>
+
+  <!-- Message list -->
+  <div id="chat-scroll" class="flex-1 overflow-y-auto space-y-4 px-1 pb-2"
+       style="flex:1; overflow-y:auto; max-height:calc(100vh - 260px);">
+    <div id="chat-empty" class="text-center py-16">
+      <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-teal-100 to-emerald-100 rounded-2xl flex items-center justify-center">
+        <span class="text-3xl">🤖</span>
+      </div>
+      <h2 class="text-lg font-semibold text-gray-700 mb-1">Musya Agent — Unified Chat</h2>
+      <p class="text-sm text-gray-400">เลือกโหมด แล้วถามข้อมูลอุบัติเหตุหรือขอ Policy Brief</p>
+      <div class="mt-3 flex justify-center gap-2 text-xs flex-wrap">
+        <span class="bg-gray-100 text-gray-500 px-2 py-1 rounded-full">🔀 Auto-routing</span>
+        <span class="bg-teal-50 text-teal-600 px-2 py-1 rounded-full">📊 รายงานเต็ม ~3–5 นาที</span>
+        <span class="bg-emerald-50 text-emerald-600 px-2 py-1 rounded-full">📋 Policy Brief</span>
+        <span class="bg-orange-50 text-orange-600 px-2 py-1 rounded-full">💬 ถามสั้น ~30–60 วินาที</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Follow-ups panel (separate, like test_ui.html) -->
+  <div id="chat-follow-ups" class="hidden px-1 pb-2">
+    <p class="text-xs text-gray-400 mb-1.5 font-medium">คำถามแนะนำ:</p>
+    <div id="chat-follow-ups-list" class="flex flex-wrap gap-2"></div>
+  </div>
+
+  <!-- Input -->
+  <div id="chat-input-box" class="bg-white border border-gray-200 rounded-xl p-3 shadow-sm">
+    <!-- Mode toggle row -->
+    <div class="flex items-center justify-between mb-2">
+      <div class="mode-toggle">
+        <button id="mode-btn-full" class="mode-btn active-full" onclick="setChatMode('full')">📊 รายงานเต็ม</button>
+        <button id="mode-btn-short" class="mode-btn" onclick="setChatMode('short')">💬 ถามสั้น</button>
+      </div>
+      <span id="mode-hint" class="text-xs text-gray-400">~3–5 นาที · กราฟ + รายงานเชิงลึก</span>
+    </div>
+    <div class="flex gap-2">
+      <textarea id="chat-input" rows="2"
+                placeholder="ถามเกี่ยวกับข้อมูลอุบัติเหตุ หรือขอ Policy Brief เช่น 'สร้าง policy brief จ.อุบลราชธานี'..."
+                class="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-teal-300"
+                onkeydown="handleChatKey(event)"></textarea>
+      <button id="chat-send-btn" onclick="sendChat()"
+              class="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg self-end transition-all">
+        ➤ ส่ง
+      </button>
+    </div>
+    <div class="flex items-center justify-between mt-1.5">
+      <p id="chat-status" class="text-xs text-gray-400">Enter ส่ง · Shift+Enter ขึ้นบรรทัดใหม่</p>
+      <button onclick="clearChat()" class="text-xs text-gray-400 hover:text-red-500 transition-all">ล้างแชท</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= TAB 1: POLICY ========================= -->
+<div id="panel-policy" class="panel">
+  <!-- Input Panel -->
+  <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5 shadow-sm">
+    <h2 class="text-base font-semibold text-gray-700 mb-4">⚙️ ตั้งค่า Policy Brief</h2>
+
+    <!-- Province -->
+    <div class="mb-4">
+      <p class="text-sm font-medium text-gray-600 mb-2">เลือกจังหวัด <span class="text-xs text-gray-400">(เขตสุขภาพที่ 10)</span></p>
+      <div class="flex flex-wrap gap-2" id="province-pills">
+        <button class="province-btn active" data-province="มุกดาหาร">มุกดาหาร</button>
+        <button class="province-btn" data-province="ยโสธร">ยโสธร</button>
+        <button class="province-btn" data-province="ศรีสะเกษ">ศรีสะเกษ</button>
+        <button class="province-btn" data-province="อำนาจเจริญ">อำนาจเจริญ</button>
+        <button class="province-btn" data-province="อุบลราชธานี">อุบลราชธานี</button>
+      </div>
+    </div>
+
+    <!-- Topics -->
+    <div class="mb-4">
+      <p class="text-sm font-medium text-gray-600 mb-2">เลือกหัวข้อ</p>
+      <div class="grid grid-cols-3 gap-3">
+        <div class="topic-card rti checked" data-topic="rti" onclick="toggleTopic(this)">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-sm font-semibold text-red-700">🚗 RTI</span>
+            <input type="checkbox" checked class="topic-check accent-red-500" onclick="event.stopPropagation()">
+          </div>
+          <p class="text-xs text-red-600">อุบัติเหตุทางถนน</p>
+        </div>
+        <div class="topic-card mental checked" data-topic="mental" onclick="toggleTopic(this)">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-sm font-semibold text-amber-700">🧠 สุขภาพจิต</span>
+            <input type="checkbox" checked class="topic-check accent-amber-500" onclick="event.stopPropagation()">
+          </div>
+          <p class="text-xs text-amber-600">⚠️ ข้อมูลละเอียดอ่อน</p>
+          <p class="text-xs text-amber-500 mt-0.5">ใช้เพื่อวางแผนนโยบายเท่านั้น</p>
+        </div>
+        <div class="topic-card ncd checked" data-topic="ncd" onclick="toggleTopic(this)">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-sm font-semibold text-emerald-700">🍎 NCDs</span>
+            <input type="checkbox" checked class="topic-check accent-emerald-500" onclick="event.stopPropagation()">
+          </div>
+          <p class="text-xs text-emerald-600">โภชนาการ &amp; โรคเรื้อรัง</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Year & Format -->
+    <div class="flex items-center gap-6 mb-5">
+      <div>
+        <label class="text-sm font-medium text-gray-600 mr-2">ปี พ.ศ.:</label>
+        <input id="year-input" type="number" value="2564" min="2560" max="2570"
+               class="border border-gray-200 rounded-lg px-3 py-1.5 text-sm w-24 focus:outline-none focus:ring-2 focus:ring-teal-300">
+      </div>
+      <div class="flex items-center gap-2 text-sm text-gray-600">
+        <span class="font-medium">รูปแบบ:</span>
+        <label class="flex items-center gap-1 cursor-pointer">
+          <input type="radio" name="format" value="markdown" checked class="accent-teal-500"> Markdown
+        </label>
+      </div>
+    </div>
+
+    <!-- Submit -->
+    <button id="submit-btn" onclick="generateBrief()"
+            class="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-sm transition-all duration-200">
+      🚀 สร้าง Policy Brief
+    </button>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading-panel" class="hidden bg-white rounded-xl border border-teal-200 p-5 mb-5">
+    <div class="flex items-center gap-3 mb-4">
+      <div class="spin text-teal-500 text-2xl">⟳</div>
+      <div>
+        <p class="text-sm font-semibold text-teal-700">กำลังประมวลผล Policy Brief...</p>
+        <p id="loading-step" class="text-xs text-gray-400">กำลังเริ่มต้น...</p>
+      </div>
+      <div class="ml-auto text-xs text-gray-400" id="elapsed-display">0s</div>
+    </div>
+    <div class="grid grid-cols-7 gap-1 mb-4">
+      <div id="node-A0" class="agent-node waiting text-center"><div class="text-lg">🔀</div><div>A0</div><div>Orch</div></div>
+      <div id="node-A1" class="agent-node waiting text-center"><div class="text-lg">📖</div><div>A1</div><div>NLM</div></div>
+      <div id="node-A2" class="agent-node waiting text-center"><div class="text-lg">🚗</div><div>A2</div><div>RTI</div></div>
+      <div id="node-A3" class="agent-node waiting text-center"><div class="text-lg">🧠</div><div>A3</div><div>MH</div></div>
+      <div id="node-A4" class="agent-node waiting text-center"><div class="text-lg">🍎</div><div>A4</div><div>NCD</div></div>
+      <div id="node-A5" class="agent-node waiting text-center"><div class="text-lg">🔖</div><div>A5</div><div>Cite</div></div>
+      <div id="node-A6" class="agent-node waiting text-center"><div class="text-lg">📝</div><div>A6</div><div>Write</div></div>
+    </div>
+    <div class="bg-gray-100 rounded-full h-2 overflow-hidden">
+      <div id="progress-bar" class="bg-teal-500 h-full rounded-full" style="width:0%"></div>
+    </div>
+    <p id="progress-pct" class="text-xs text-gray-400 mt-1 text-right">0%</p>
+  </div>
+
+  <!-- Result Panel -->
+  <div id="result-panel" class="hidden bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+    <!-- Inner tabs -->
+    <div class="flex border-b border-gray-100 px-4 pt-2 gap-1" id="result-tabs">
+      <button class="result-tab active" data-tab="brief" onclick="switchResultTab('brief')">📄 Policy Brief</button>
+      <button class="result-tab" data-tab="rti"     onclick="switchResultTab('rti')">🚗 RTI</button>
+      <button class="result-tab" data-tab="mental"  onclick="switchResultTab('mental')">🧠 สุขภาพจิต</button>
+      <button class="result-tab" data-tab="ncd"     onclick="switchResultTab('ncd')">🍎 NCD</button>
+      <button class="result-tab" data-tab="cross"   onclick="switchResultTab('cross')">🔗 Cross-topic</button>
+      <button class="result-tab" data-tab="citations" onclick="switchResultTab('citations')">🔖 อ้างอิง</button>
+    </div>
+
+    <!-- Brief Tab -->
+    <div id="result-brief" class="result-section p-5">
+      <div class="flex justify-between items-start mb-3">
+        <h3 class="text-sm font-semibold text-gray-700">📄 Policy Brief — <span id="brief-province-label"></span></h3>
+        <div class="flex gap-2">
+          <span id="brief-elapsed" class="text-xs text-gray-400"></span>
+          <button onclick="copyBrief()" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-500 px-2.5 py-1 rounded-lg transition-all">📋 Copy</button>
+        </div>
+      </div>
+      <div id="brief-content" class="prose text-sm max-h-[640px] overflow-y-auto"></div>
+      <div id="priority-recs" class="mt-4"></div>
+    </div>
+
+    <!-- RTI Tab -->
+    <div id="result-rti" class="result-section hidden p-5">
+      <h3 class="text-sm font-semibold text-red-700 mb-3">🚗 สถานการณ์อุบัติเหตุทางถนน</h3>
+      <div id="rti-content" class="prose text-sm"></div>
+    </div>
+
+    <!-- Mental Tab -->
+    <div id="result-mental" class="result-section hidden p-5">
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
+        <p class="text-sm font-semibold text-amber-700 mb-1">⚠️ คำเตือน — ข้อมูลละเอียดอ่อน</p>
+        <p class="text-xs text-amber-800">ข้อมูลนี้จัดทำเพื่อวางแผนนโยบายสาธารณสุขภายในเท่านั้น ไม่ใช่สำหรับสื่อมวลชนหรือรายงานสาธารณะ ต้องผ่านการทบทวนโดยผู้เชี่ยวชาญด้านสุขภาพจิตก่อนเผยแพร่</p>
+      </div>
+      <h3 class="text-sm font-semibold text-amber-700 mb-3">🧠 สถานการณ์สุขภาพจิต</h3>
+      <div id="mental-content" class="prose text-sm"></div>
+    </div>
+
+    <!-- NCD Tab -->
+    <div id="result-ncd" class="result-section hidden p-5">
+      <h3 class="text-sm font-semibold text-emerald-700 mb-3">🍎 โภชนาการและโรคไม่ติดต่อเรื้อรัง</h3>
+      <div id="ncd-content" class="prose text-sm"></div>
+    </div>
+
+    <!-- Cross-topic Tab -->
+    <div id="result-cross" class="result-section hidden p-5">
+      <h3 class="text-sm font-semibold text-gray-700 mb-3">🔗 ความเชื่อมโยงข้ามประเด็น</h3>
+      <div id="cross-content" class="space-y-3"></div>
+    </div>
+
+    <!-- Citations Tab -->
+    <div id="result-citations" class="result-section hidden p-5">
+      <h3 class="text-sm font-semibold text-gray-700 mb-3">🔖 อ้างอิง (<span id="citation-count">0</span> รายการ)</h3>
+      <div id="citations-content" class="space-y-1"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ====================== TAB 2: PIPELINE ======================== -->
+
+<div id="panel-pipeline" class="panel hidden">
+  <!-- Flow diagram -->
+  <div class="bg-white rounded-xl border border-gray-200 p-5 mb-4 shadow-sm">
+    <h2 class="text-base font-semibold text-gray-700 mb-4">🔄 Agent Pipeline</h2>
+    <div class="flex items-center gap-2 flex-wrap">
+      <div class="flex flex-col items-center">
+        <div id="pipe-A0" class="agent-node waiting"><div>🔀</div><div class="text-xs">A0</div><div class="text-xs">Orch</div></div>
+      </div>
+      <div class="text-gray-300 font-bold text-lg">→</div>
+      <div class="flex flex-col items-center">
+        <div id="pipe-A1" class="agent-node waiting"><div>📖</div><div class="text-xs">A1</div><div class="text-xs">NLM</div></div>
+      </div>
+      <div class="text-gray-300 font-bold text-lg">→</div>
+      <!-- Parallel group -->
+      <div class="border-2 border-dashed border-teal-200 rounded-xl p-2">
+        <div class="text-center mb-1">
+          <span class="text-xs bg-teal-100 text-teal-600 px-2 py-0.5 rounded-full font-medium">Parallel</span>
+        </div>
+        <div class="flex gap-2">
+          <div id="pipe-A2" class="agent-node waiting"><div>🚗</div><div class="text-xs">A2</div><div class="text-xs">RTI</div></div>
+          <div id="pipe-A3" class="agent-node waiting"><div>🧠</div><div class="text-xs">A3</div><div class="text-xs">MH</div></div>
+          <div id="pipe-A4" class="agent-node waiting"><div>🍎</div><div class="text-xs">A4</div><div class="text-xs">NCD</div></div>
+        </div>
+      </div>
+      <div class="text-gray-300 font-bold text-lg">→</div>
+      <div class="flex flex-col items-center">
+        <div id="pipe-A5" class="agent-node waiting"><div>🔖</div><div class="text-xs">A5</div><div class="text-xs">Cite</div></div>
+      </div>
+      <div class="text-gray-300 font-bold text-lg">→</div>
+      <div class="flex flex-col items-center">
+        <div id="pipe-A6" class="agent-node waiting"><div>📝</div><div class="text-xs">A6</div><div class="text-xs">Write</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Log stream -->
+  <div class="bg-white rounded-xl border border-gray-200 p-5 mb-4 shadow-sm">
+    <div class="flex justify-between items-center mb-2">
+      <h2 class="text-base font-semibold text-gray-700">📟 Agent Log</h2>
+      <button onclick="clearLog()" class="text-xs text-gray-400 hover:text-gray-600">🗑 Clear</button>
+    </div>
+    <div id="pipeline-log"><span class="text-gray-600">— รอการเริ่มต้น Pipeline —</span></div>
+  </div>
+
+  <!-- Timing summary -->
+  <div id="timing-panel" class="hidden bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+    <h2 class="text-base font-semibold text-gray-700 mb-3">⏱ สรุปเวลา</h2>
+    <div id="timing-content" class="text-sm text-gray-600"></div>
+  </div>
+</div>
+
+<!-- ======================= TAB 3: TOOLS ========================= -->
+<div id="panel-tools" class="panel hidden">
+
+  <!-- Section A: NotebookLM Tools -->
+  <div class="mb-6">
+    <h2 class="text-base font-semibold text-gray-700 mb-3">🤖 NotebookLM Tools <span class="text-xs font-normal text-teal-600 bg-teal-50 px-2 py-0.5 rounded-full ml-1">Phase 3</span></h2>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+      <!-- nlm_ask card -->
+      <div class="bg-white rounded-xl border border-teal-200 p-4 shadow-sm">
+        <div class="flex items-center gap-2 mb-3">
+          <div class="w-8 h-8 bg-teal-50 rounded-lg flex items-center justify-center text-teal-600">🤖</div>
+          <h3 class="text-sm font-semibold text-gray-700">nlm_ask — NotebookLM Query</h3>
+        </div>
+        <div class="space-y-2 mb-3">
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">จังหวัด</label>
+            <select id="nlm-province" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-300">
+              <option>มุกดาหาร</option><option>ยโสธร</option><option>ศรีสะเกษ</option>
+              <option>อำนาจเจริญ</option><option selected>อุบลราชธานี</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">หัวข้อ</label>
+            <select id="nlm-topic" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-300">
+              <option value="rti">rti — อุบัติเหตุทางถนน</option>
+              <option value="mental">mental — สุขภาพจิต</option>
+              <option value="ncd">ncd — โภชนาการ &amp; NCDs</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-500 mb-1 block">Custom Query (optional)</label>
+            <input id="nlm-custom" type="text" placeholder="เว้นว่างเพื่อใช้ query มาตรฐาน"
+                   class="w-full text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-300">
+          </div>
+        </div>
+        <button onclick="runNlmAsk()" id="nlm-btn"
+                class="w-full py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg transition-all">
+          ▶ Run nlm_ask
+        </button>
+        <div id="nlm-result" class="mt-3 hidden">
+          <div class="flex justify-between text-xs text-gray-400 mb-1">
+            <span id="nlm-meta"></span>
+            <button onclick="copyText('nlm-result-text')" class="hover:text-gray-600">📋 Copy</button>
+          </div>
+          <div id="nlm-result-text" class="tool-result"></div>
+        </div>
+      </div>
+
+      <!-- Provinces list card -->
+      <div class="bg-white rounded-xl border border-teal-200 p-4 shadow-sm">
+        <div class="flex items-center gap-2 mb-3">
+          <div class="w-8 h-8 bg-teal-50 rounded-lg flex items-center justify-center text-teal-600">📋</div>
+          <h3 class="text-sm font-semibold text-gray-700">get_supported_provinces</h3>
+        </div>
+        <p class="text-xs text-gray-500 mb-3">ดูรายชื่อจังหวัดและ notebook ID ที่รองรับ</p>
+        <button onclick="runGetProvinces()"
+                class="w-full py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg transition-all">
+          ▶ Run
+        </button>
+        <div id="provinces-result" class="mt-3 hidden tool-result"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section B: Database Tools -->
+  <div>
+    <h2 class="text-base font-semibold text-gray-700 mb-3">🗄️ Database Tools <span class="text-xs font-normal text-gray-400 ml-1">Phase 2</span></h2>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+      <!-- Hotspots -->
+      <div class="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+        <h3 class="text-sm font-semibold text-gray-600 mb-2">get_accident_hotspots</h3>
+        <div class="space-y-2 mb-3">
+          <div>
+            <label class="text-xs text-gray-400">จังหวัด (filter)</label>
+            <select id="hs-province" class="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-1 focus:ring-teal-300">
+              <option value="">ทุกจังหวัด</option>
+              <option>มุกดาหาร</option><option>ยโสธร</option><option>ศรีสะเกษ</option>
+              <option>อำนาจเจริญ</option><option>อุบลราชธานี</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400">top_n</label>
+            <input id="hs-topn" type="number" value="10" class="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-1 focus:ring-teal-300">
+          </div>
+        </div>
+        <button onclick="runHotspots()" class="w-full py-1.5 bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium rounded-lg">▶ Run</button>
+        <div id="hs-result" class="mt-2 hidden tool-result"></div>
+      </div>
+
+      <!-- Province Year -->
+      <div class="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+        <h3 class="text-sm font-semibold text-gray-600 mb-2">get_province_year_summary</h3>
+        <div class="space-y-2 mb-3">
+          <div>
+            <label class="text-xs text-gray-400">จังหวัด</label>
+            <select id="py-province" class="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-1 focus:ring-teal-300">
+              <option value="">ทุกจังหวัด</option>
+              <option>มุกดาหาร</option><option>ยโสธร</option><option>ศรีสะเกษ</option>
+              <option>อำนาจเจริญ</option><option selected>อุบลราชธานี</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs text-gray-400">ปี (0 = ทุกปี)</label>
+            <input id="py-year" type="number" value="0" class="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-1 focus:ring-teal-300">
+          </div>
+        </div>
+        <button onclick="runProvinceYear()" class="w-full py-1.5 bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium rounded-lg">▶ Run</button>
+        <div id="py-result" class="mt-2 hidden tool-result"></div>
+      </div>
+
+      <!-- Time Distribution -->
+      <div class="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
+        <h3 class="text-sm font-semibold text-gray-600 mb-2">get_accident_time_distribution</h3>
+        <p class="text-xs text-gray-400 mb-3">การกระจายอุบัติเหตุตามช่วงเวลาในวัน</p>
+        <div class="mb-3">
+          <label class="text-xs text-gray-400">geography</label>
+          <input id="td-geo" type="text" placeholder="เว้นว่าง = ทั้งหมด"
+                 class="w-full text-sm border border-gray-200 rounded-lg px-2 py-1.5 mt-0.5 focus:outline-none focus:ring-1 focus:ring-teal-300">
+        </div>
+        <button onclick="runTimeDistribution()" class="w-full py-1.5 bg-gray-700 hover:bg-gray-800 text-white text-xs font-medium rounded-lg">▶ Run</button>
+        <div id="td-result" class="mt-2 hidden tool-result"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= TAB 5: REFERENCE LIBRARY =========== -->
+<div id="panel-refs" class="panel hidden">
+
+  <div class="bg-white rounded-xl border border-gray-200 p-5 mb-4 shadow-sm">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-base font-semibold text-gray-700">📚 คลังเอกสารอ้างอิง</h2>
+        <p class="text-xs text-gray-400">เอกสารทั้งหมดใน MinIO — คลิก 🔗 เพื่อเปิด PDF ในแท็บใหม่</p>
+      </div>
+      <button onclick="loadRefLibrary()" class="text-xs bg-teal-50 text-teal-600 hover:bg-teal-100 px-3 py-1.5 rounded-lg border border-teal-200">🔄 Refresh</button>
+    </div>
+
+    <!-- Search + Filter bar -->
+    <div class="flex gap-2 mb-4">
+      <input id="refs-search" type="text" placeholder="ค้นหาชื่อเอกสาร หรือ path..."
+             class="flex-1 text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-300"
+             oninput="filterRefTable()">
+      <select id="refs-topic" class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-teal-300"
+              onchange="filterRefTable()">
+        <option value="">ทุกหัวข้อ</option>
+        <option value="accident">🚗 Accident</option>
+        <option value="mental_health">🧠 Mental Health</option>
+        <option value="nutrition">🍎 Nutrition</option>
+        <option value="general">📄 General</option>
+      </select>
+    </div>
+
+    <!-- Stats bar -->
+    <div class="flex gap-3 mb-4 text-xs">
+      <span class="bg-teal-50 text-teal-700 px-2.5 py-1 rounded-full">รวม: <span id="refs-total">—</span> เอกสาร</span>
+      <span class="bg-green-50 text-green-700 px-2.5 py-1 rounded-full">มี APA: <span id="refs-apa-count">—</span></span>
+      <span class="bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full">มี PDF: <span id="refs-pdf-count">—</span></span>
+    </div>
+
+    <!-- Table -->
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="border-b border-gray-100 bg-gray-50">
+            <th class="text-left py-2 px-3 text-gray-500 font-medium w-8">#</th>
+            <th class="text-left py-2 px-3 text-gray-500 font-medium">APA Citation</th>
+            <th class="text-left py-2 px-3 text-gray-500 font-medium w-24">หัวข้อ</th>
+            <th class="text-left py-2 px-3 text-gray-500 font-medium w-16">ปี</th>
+            <th class="text-left py-2 px-3 text-gray-500 font-medium w-20">ชิ้นส่วน</th>
+            <th class="text-center py-2 px-3 text-gray-500 font-medium w-16">เปิด</th>
+          </tr>
+        </thead>
+        <tbody id="refs-table-body">
+          <tr><td colspan="6" class="py-8 text-center text-gray-400">กำลังโหลด...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p id="refs-empty" class="hidden text-center py-6 text-sm text-gray-400">ไม่พบเอกสารในฐานข้อมูล</p>
+  </div>
+
+</div>
+
+<!-- ======================= TAB 4: DATA ========================== -->
+<div id="panel-data" class="panel hidden">
+
+  <!-- Section A: NotebookLM Sources -->
+  <div class="bg-white rounded-xl border border-gray-200 p-5 mb-4 shadow-sm">
+    <div class="flex items-center justify-between mb-3">
+      <div>
+        <h2 class="text-base font-semibold text-gray-700">📚 NotebookLM Sources</h2>
+        <p class="text-xs text-gray-400">รายงานตรวจราชการสาธารณสุข เขตสุขภาพที่ 10</p>
+      </div>
+      <button onclick="loadProvinceList()" class="text-xs bg-teal-50 text-teal-600 hover:bg-teal-100 px-3 py-1.5 rounded-lg border border-teal-200">
+        🔄 Refresh
+      </button>
+    </div>
+
+    <!-- Notebook info card -->
+    <div class="bg-teal-50 border border-teal-200 rounded-lg p-3 mb-3 text-xs">
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="font-semibold text-teal-700">Notebook:</span>
+          <span class="text-teal-600 ml-1">รายงานตรวจราชการสาธารณสุข รอบที่ 2</span>
+        </div>
+        <span class="font-mono text-teal-500">bc3d9350...56e</span>
+      </div>
+    </div>
+
+    <!-- Sources table -->
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="border-b border-gray-100">
+            <th class="text-left py-2 px-2 text-gray-500 font-medium">จังหวัด</th>
+            <th class="text-left py-2 px-2 text-gray-500 font-medium">เอกสาร</th>
+            <th class="text-left py-2 px-2 text-gray-500 font-medium">ประเภท</th>
+            <th class="text-left py-2 px-2 text-gray-500 font-medium">ปี</th>
+            <th class="text-left py-2 px-2 text-gray-500 font-medium">สถานะ</th>
+          </tr>
+        </thead>
+        <tbody id="sources-table">
+          <!-- Populated by JS -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Section B: DB Overview -->
+  <div class="mb-4">
+    <h2 class="text-base font-semibold text-gray-700 mb-3">🗄️ Database Overview</h2>
+    <div class="grid grid-cols-3 gap-3 mb-4">
+      <div class="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
+        <p class="text-2xl font-bold text-teal-600" id="db-accidents">—</p>
+        <p class="text-xs text-gray-400 mt-1">fact_accident_event</p>
+      </div>
+      <div class="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
+        <p class="text-2xl font-bold text-teal-600" id="db-provinces">77</p>
+        <p class="text-xs text-gray-400 mt-1">จังหวัด (dim_geography)</p>
+      </div>
+      <div class="bg-white rounded-xl border border-gray-200 p-4 text-center shadow-sm">
+        <p class="text-2xl font-bold text-teal-600" id="db-embeddings">—</p>
+        <p class="text-xs text-gray-400 mt-1">document_embeddings</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Section C: SQL Query -->
+  <div class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+    <h2 class="text-base font-semibold text-gray-700 mb-3">🔍 SQL Query</h2>
+    <textarea id="sql-input" rows="3"
+              class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-teal-300 resize-none"
+              placeholder="SELECT * FROM mart_province_year WHERE province_name = 'อุบลราชธานี' LIMIT 10"></textarea>
+    <button onclick="runSQL()" class="mt-2 px-4 py-2 bg-gray-700 hover:bg-gray-800 text-white text-sm rounded-lg">▶ Execute</button>
+    <div id="sql-result" class="mt-3 hidden tool-result"></div>
+  </div>
+</div>
+
+</main>
+
+<!-- ====================== JAVASCRIPT ========================= -->
+<script>
+const PROVINCES = ['มุกดาหาร','ยโสธร','ศรีสะเกษ','อำนาจเจริญ','อุบลราชธานี'];
+const NOTEBOOK_ID = 'bc3d9350-1855-45f0-a2c3-a5634ed8056e';
+const BASE = '';  // same origin
+
+const state = {
+  selectedProvince: 'มุกดาหาร',
+  selectedTopics:   ['rti','mental','ncd'],
+  selectedYear:     2564,
+  isLoading:        false,
+  agentStates:      {A0:'waiting',A1:'waiting',A2:'waiting',A3:'waiting',A4:'waiting',A5:'waiting',A6:'waiting'},
+  elapsed:          0,
+  elapsedTimer:     null,
+  lastResponse:     null,
+  activeTab:        'chat',
+  activeResultTab:  'brief',
+  chatHistory:      [],
+  chatLoading:      false,
+  chatMode:         'full',   // 'full' = รายงานเต็ม | 'short' = ถามสั้น
+};
+
+// ── Tab switching ──────────────────────────────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.panel').forEach(p => {
+    p.classList.add('hidden');
+    p.style.display = 'none';
+  });
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.remove('bg-teal-50','text-teal-700');
+    b.classList.add('text-gray-500','hover:bg-gray-100');
+  });
+  const panel = document.getElementById('panel-' + name);
+  panel.classList.remove('hidden');
+  panel.style.display = name === 'chat' ? 'flex' : 'block';
+  panel.style.flexDirection = name === 'chat' ? 'column' : '';
+  const btn = document.getElementById('tab-' + name);
+  btn.classList.remove('text-gray-500','hover:bg-gray-100');
+  btn.classList.add('bg-teal-50','text-teal-700');
+  state.activeTab = name;
+}
+
+function switchResultTab(name) {
+  document.querySelectorAll('.result-section').forEach(s => s.classList.add('hidden'));
+  document.querySelectorAll('.result-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('result-' + name).classList.remove('hidden');
+  document.querySelector(`.result-tab[data-tab="${name}"]`).classList.add('active');
+  state.activeResultTab = name;
+}
+
+// ── Province selector ────────────────────────────────────────────────────
+document.getElementById('province-pills').addEventListener('click', e => {
+  const btn = e.target.closest('.province-btn');
+  if (!btn) return;
+  document.querySelectorAll('.province-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  state.selectedProvince = btn.dataset.province;
+});
+
+// ── Topic toggle ─────────────────────────────────────────────────────────
+function toggleTopic(card) {
+  card.classList.toggle('checked');
+  const chk = card.querySelector('.topic-check');
+  chk.checked = card.classList.contains('checked');
+  state.selectedTopics = Array.from(document.querySelectorAll('.topic-card.checked'))
+    .map(c => c.dataset.topic);
+}
+
+// ── Generate Brief ────────────────────────────────────────────────────────
+async function generateBrief() {
+  if (state.isLoading) return;
+  if (!state.selectedTopics.length) {
+    alert('กรุณาเลือกอย่างน้อย 1 หัวข้อ'); return;
+  }
+
+  state.selectedYear = parseInt(document.getElementById('year-input').value) || 2564;
+  setLoading(true);
+  resetPipeline();
+  clearLog();
+
+  const payload = {
+    province: state.selectedProvince,
+    topics:   state.selectedTopics,
+    year:     state.selectedYear,
+    format:   'markdown'
+  };
+
+  streamLog(`★ [CREW START] province=${state.selectedProvince} topics=${state.selectedTopics.join(',')}`, 'log-start');
+  simulatePipelineProgress();
+
+  try {
+    const res = await fetch(BASE + '/api/policy-brief', {
+      method:  'POST',
+      headers: {'Content-Type':'application/json'},
+      body:    JSON.stringify(payload)
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      const msg = data.detail?.message || JSON.stringify(data);
+      streamLog(`✗ [ERROR] ${msg}`, 'log-error');
+      setLoading(false, true, msg);
+      return;
+    }
+
+    state.lastResponse = data;
+    streamLog(`✅ [A6] Policy Brief complete — ${(data.metadata?.elapsed_seconds||0).toFixed(1)}s`, 'log-done');
+    setLoading(false);
+    renderPolicyBrief(data);
+  } catch (err) {
+    streamLog(`✗ [NETWORK ERROR] ${err}`, 'log-error');
+    setLoading(false, true, err.toString());
+  }
+}
+
+function setLoading(loading, isError=false, errMsg='') {
+  state.isLoading = loading;
+  const btn   = document.getElementById('submit-btn');
+  const panel = document.getElementById('loading-panel');
+
+  if (loading) {
+    btn.disabled = true;
+    btn.className = 'w-full py-2.5 rounded-xl bg-teal-400 text-white font-semibold text-sm cursor-not-allowed';
+    btn.innerHTML = '<span class="spin inline-block mr-1">⟳</span> กำลังประมวลผล...';
+    panel.classList.remove('hidden');
+    state.elapsed = 0;
+    state.elapsedTimer = setInterval(() => {
+      state.elapsed++;
+      document.getElementById('elapsed-display').textContent = state.elapsed + 's';
+    }, 1000);
+  } else {
+    clearInterval(state.elapsedTimer);
+    panel.classList.add('hidden');
+    if (isError) {
+      btn.disabled = false;
+      btn.className = 'w-full py-2.5 rounded-xl bg-red-50 text-red-600 border border-red-200 font-semibold text-sm';
+      btn.innerHTML = '⚠️ เกิดข้อผิดพลาด — ลองใหม่';
+    } else {
+      btn.disabled = false;
+      btn.className = 'w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-sm transition-all duration-200';
+      btn.innerHTML = '🔄 สร้างใหม่';
+    }
+  }
+}
+
+// ── Pipeline simulation (optimistic UI) ──────────────────────────────────
+function resetPipeline() {
+  ['A0','A1','A2','A3','A4','A5','A6'].forEach(id => setNodeState(id,'waiting'));
+  setProgress(0);
+  document.getElementById('timing-panel').classList.add('hidden');
+}
+
+function simulatePipelineProgress() {
+  const steps = [
+    {delay:500,  fn:()=>{ setNodeState('A0','running'); setStep('A0 Orchestrator — initializing...'); }},
+    {delay:2000, fn:()=>{ setNodeState('A0','done');    streamLog('✅ [A0] Orchestrator done — routing to A1','log-done'); }},
+    {delay:2500, fn:()=>{ setNodeState('A1','running'); setStep('A1 NLM Fetcher — querying RTI...'); streamLog('🔄 [A1] Querying RTI...','log-running'); setProgress(15); }},
+    {delay:8000, fn:()=>{ streamLog('🔄 [A1] Querying Mental Health...','log-running'); setStep('A1 NLM Fetcher — querying Mental Health...'); }},
+    {delay:14000,fn:()=>{ streamLog('🔄 [A1] Querying NCD...','log-running'); setStep('A1 NLM Fetcher — querying NCD...'); }},
+    {delay:20000,fn:()=>{ setNodeState('A1','done'); setProgress(35); streamLog('✅ [A1] NLM data fetched — structured JSON ready','log-done'); }},
+    {delay:21000,fn:()=>{ setNodeState('A2','running'); setNodeState('A3','running'); setNodeState('A4','running'); setStep('Parallel Analysts — RTI / Mental / NCD...'); streamLog('🔄 [A2][A3][A4] Parallel analysts running...','log-running'); setProgress(50); }},
+    {delay:38000,fn:()=>{ setNodeState('A2','done'); setNodeState('A3','done'); setNodeState('A4','done'); setProgress(65); streamLog('✅ [A2-A4] Analyst tasks complete','log-done'); }},
+    {delay:39000,fn:()=>{ setNodeState('A5','running'); setStep('A5 Citation Agent — normalizing evidence...'); streamLog('🔄 [A5] Citation & Evidence normalizing...','log-running'); }},
+    {delay:50000,fn:()=>{ setNodeState('A5','done'); setProgress(80); streamLog('✅ [A5] Citations ready','log-done'); }},
+    {delay:51000,fn:()=>{ setNodeState('A6','running'); setStep('A6 Report Writer — synthesizing Policy Brief...'); streamLog('🔄 [A6] Report Writer synthesizing...','log-running'); setProgress(90); }},
+  ];
+  steps.forEach(s => setTimeout(s.fn, s.delay));
+}
+
+function setNodeState(id, st) {
+  ['node-'+id,'pipe-'+id].forEach(nid => {
+    const el = document.getElementById(nid);
+    if (!el) return;
+    el.className = 'agent-node ' + st;
+    const icon = el.querySelector('div:first-child');
+    if (icon && st === 'running') icon.classList.add('spin');
+    if (icon && st !== 'running') icon.classList.remove('spin');
+  });
+}
+
+function setProgress(pct) {
+  document.getElementById('progress-bar').style.width = pct + '%';
+  document.getElementById('progress-pct').textContent = pct + '%';
+}
+
+function setStep(msg) {
+  document.getElementById('loading-step').textContent = msg;
+}
+
+// ── Render Policy Brief ────────────────────────────────────────────────────
+function renderPolicyBrief(data) {
+  // Mark all nodes done
+  ['A0','A1','A2','A3','A4','A5','A6'].forEach(id => setNodeState(id,'done'));
+  setProgress(100);
+
+  const elapsed = data.metadata?.elapsed_seconds || 0;
+
+  // Show timing panel
+  renderTimingSummary(data.metadata);
+
+  // Show result panel
+  document.getElementById('result-panel').classList.remove('hidden');
+
+  // Brief tab
+  document.getElementById('brief-province-label').textContent = data.province;
+  document.getElementById('brief-elapsed').textContent = `⏱ ${elapsed.toFixed(1)}s`;
+  document.getElementById('brief-content').innerHTML = marked.parse(data.policy_brief || '_(ไม่มีข้อมูล)_');
+
+  // RTI section
+  renderTopicSection('rti', data.sections?.rti);
+
+  // Mental section
+  renderTopicSection('mental', data.sections?.mental);
+
+  // NCD section
+  renderTopicSection('ncd', data.sections?.ncd);
+
+  // Cross-topic
+  renderCrossLinks(data.cross_topic_links || []);
+
+  // Citations
+  renderCitations(data.citations || []);
+
+  // Post-process inline [C-xxx] codes into tooltips in all content areas
+  postProcessInlineCitations();
+
+  // Priority recommendations in brief tab
+  document.getElementById('priority-recs').innerHTML = '';
+  if (data.priority_recommendations?.length) {
+    const hdr = document.createElement('h2');
+    hdr.className = 'text-base font-semibold text-gray-700 mb-2';
+    hdr.textContent = '📌 ข้อเสนอแนะเชิงระบบรวม (Priority Recommendations)';
+    document.getElementById('priority-recs').appendChild(hdr);
+    renderPriorityRecs(data.priority_recommendations, 'priority-recs');
+  }
+
+  // Switch to brief tab
+  switchResultTab('brief');
+}
+
+function renderTopicSection(topic, sectionData) {
+  const el = document.getElementById(topic + '-content');
+  if (!el) return;
+  if (!sectionData) {
+    el.innerHTML = '<p class="text-sm text-gray-400">ไม่มีข้อมูลสำหรับหัวข้อนี้</p>';
+    return;
+  }
+  // sections.rti/mental/ncd are now full Markdown strings
+  if (typeof sectionData === 'string') {
+    el.innerHTML = marked.parse(sectionData);
+    return;
+  }
+  // Legacy: build from structured analyst JSON (fallback)
+  let md = '';
+  if (sectionData.situation) {
+    md += '## สถานการณ์\n';
+    Object.entries(sectionData.situation).forEach(([k,v]) => {
+      md += `- **${k}**: ${v}\n`;
+    });
+  }
+  if (sectionData.policy_recommendations?.length) {
+    md += '\n## ข้อเสนอแนะ\n\n| ลำดับ | มาตรการ | ระยะเวลา | KPI |\n|---|---|---|---|\n';
+    sectionData.policy_recommendations.forEach((r,i) => {
+      const tf = timeframeBadge(r.timeframe);
+      md += `| ${i+1} | ${r.action||''} | ${tf} | ${r.kpi||''} |\n`;
+    });
+  }
+  el.innerHTML = md ? marked.parse(md) : '<p class="text-sm text-gray-400">กำลังประมวลผลข้อมูล...</p>';
+}
+
+function timeframeBadge(tf) {
+  if (!tf) return '';
+  const map = {short:'ระยะสั้น', medium:'ระยะกลาง', long:'ระยะยาว'};
+  return map[tf] || tf;
+}
+
+function renderCrossLinks(links) {
+  const el = document.getElementById('cross-content');
+  if (!links.length) {
+    el.innerHTML = '<p class="text-sm text-gray-400 py-4 text-center">ไม่พบความเชื่อมโยงข้ามประเด็น</p>';
+    return;
+  }
+  const topicIcons = {rti:'🚗', mental:'🧠', ncd:'🍎'};
+  const topicColors = {rti:'bg-red-50 text-red-700', mental:'bg-amber-50 text-amber-700', ncd:'bg-emerald-50 text-emerald-700'};
+
+  el.innerHTML = links.map(link => {
+    // Try to detect which topics are mentioned
+    const mentioned = Object.keys(topicIcons).filter(t => link.toLowerCase().includes(t==='rti'?'rti':'rti'===t?'rti':t));
+    let badge1 = '', badge2 = '';
+    if (link.toLowerCase().includes('rti'))    badge1 = `<span class="text-xs px-2 py-0.5 rounded-full ${topicColors.rti}">🚗 RTI</span>`;
+    if (link.toLowerCase().includes('mental') || link.toLowerCase().includes('สุขภาพจิต') || link.toLowerCase().includes('suicide') || link.toLowerCase().includes('ซึมเศร้า'))
+      badge2 = `<span class="text-xs px-2 py-0.5 rounded-full ${topicColors.mental}">🧠 MH</span>`;
+    if (link.toLowerCase().includes('ncd') || link.toLowerCase().includes('dm') || link.toLowerCase().includes('อ้วน') || link.toLowerCase().includes('ck'))
+      badge2 = badge2 || `<span class="text-xs px-2 py-0.5 rounded-full ${topicColors.ncd}">🍎 NCD</span>`;
+    return `<div class="bg-gray-50 border border-gray-200 rounded-lg p-3 chat-bubble">
+      <div class="flex items-center gap-2 mb-1">${badge1}<span class="text-gray-300 font-bold">→</span>${badge2}</div>
+      <p class="text-sm text-gray-700">${escapeHtml(link)}</p>
+    </div>`;
+  }).join('');
+}
+
+function renderCitations(citations) {
+  // Deduplicate by source_ref (keep first occurrence)
+  const seen = new Set();
+  const unique = citations.filter(c => {
+    const key = (c.source_ref || c.citation_code || '').trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  document.getElementById('citation-count').textContent = unique.length;
+  const el = document.getElementById('citations-content');
+  if (!unique.length) {
+    el.innerHTML = '<p class="text-sm text-gray-400 py-4 text-center">ไม่มีการอ้างอิง</p>';
+    return;
+  }
+  // Store citations globally for tooltip lookup
+  window._citationMap = {};
+  unique.forEach(c => { window._citationMap[c.citation_code] = c; });
+
+  const srcIcon = {notebooklm_pdf:'📄', database:'🗄️', document:'📝'};
+  const trustClass = {high:'bg-green-50 text-green-700', medium:'bg-yellow-50 text-yellow-700', low:'bg-red-50 text-red-700'};
+  el.innerHTML = unique.map((c, i) => {
+    const icon  = srcIcon[c.source_type] || '📎';
+    const trust = (c.trust_level||'medium').toLowerCase();
+    const tc    = trustClass[trust] || trustClass.medium;
+    const bibText = c.bibliography_text || c.citation_text || c.source_ref || '';
+    const linkIcon = c.open_url
+      ? `<a href="${c.open_url}" target="_blank" rel="noopener" class="text-teal-500 hover:text-teal-700 ml-1 text-sm align-middle" title="เปิดเอกสารต้นฉบับในแท็บใหม่">�</a>`
+      : '';
+    return `<div class="flex items-start py-2.5 border-b border-gray-100">
+      <div class="flex items-start gap-2 min-w-0">
+        <span class="font-mono text-xs bg-teal-50 text-teal-700 px-2 py-0.5 rounded shrink-0">${escapeHtml(c.citation_code||'')}</span>
+        <div class="min-w-0">
+          <p class="text-xs text-gray-700 leading-relaxed">${icon} ${escapeHtml(bibText)}${linkIcon}</p>
+          <p class="text-xs text-gray-400 mt-0.5">${escapeHtml(c.source_type||'')} · <span class="${tc} text-xs px-1.5 py-0.5 rounded">${trust.toUpperCase()}</span></p>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function postProcessInlineCitations() {
+  // Replace [C-xxx] text in rendered content with interactive tooltip spans
+  const map = window._citationMap || {};
+  if (!Object.keys(map).length) return;
+
+  const containers = [
+    'brief-content', 'rti-content', 'mental-content', 'ncd-content', 'cross-content',
+  ];
+
+  containers.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    // Replace [C-xxx] patterns with tooltip spans
+    el.innerHTML = el.innerHTML.replace(/\[C-(\d{3})\]/g, (match, num) => {
+      const code = 'C-' + num;
+      const c = map[code];
+      if (!c) return match; // no match in citation map — leave as-is
+      const bib = escapeHtml(c.bibliography_text || c.citation_text || c.source_ref || code);
+      const url = c.open_url || '';
+      const clickAttr = url
+        ? `onclick="window.open('${url}','_blank')" style="cursor:pointer"`
+        : '';
+      return `<span class="citation-tooltip-wrapper" ${clickAttr}>` +
+        `<span class="citation-inline">[${code}]</span>` +
+        `<span class="citation-tooltip">${bib}` +
+        (url ? `<br><span class="citation-tooltip-link">📄 คลิกเปิด PDF</span>` : '') +
+        `</span></span>`;
+    });
+  });
+}
+
+function renderPriorityRecs(recs, containerId) {
+  const el = document.getElementById(containerId);
+  if (!el || !recs?.length) return;
+  const tfMap = {short:'ระยะสั้น <3 เดือน', medium:'ระยะกลาง 3-12 เดือน', long:'ระยะยาว >1 ปี'};
+  const domainColor = {rti:'bg-red-50 text-red-700', mental:'bg-amber-50 text-amber-700', ncd:'bg-emerald-50 text-emerald-700'};
+  const domainIcon  = {rti:'🚗', mental:'🧠', ncd:'🍎'};
+  el.innerHTML = `<div class="overflow-x-auto"><table class="w-full text-xs">
+    <thead><tr class="border-b border-gray-100">
+      <th class="text-left py-1.5 px-2 text-gray-500 font-medium">#</th>
+      <th class="text-left py-1.5 px-2 text-gray-500 font-medium">Domain</th>
+      <th class="text-left py-1.5 px-2 text-gray-500 font-medium">มาตรการ</th>
+      <th class="text-left py-1.5 px-2 text-gray-500 font-medium">ระยะเวลา</th>
+      <th class="text-left py-1.5 px-2 text-gray-500 font-medium">ผู้รับผิดชอบ</th>
+      <th class="text-left py-1.5 px-2 text-gray-500 font-medium">KPI</th>
+    </tr></thead>
+    <tbody>${recs.map(r => {
+      const dc = domainColor[r.domain] || 'bg-gray-50 text-gray-600';
+      const di = domainIcon[r.domain] || '📌';
+      const tf = tfMap[r.timeframe] || r.timeframe || '';
+      return `<tr class="border-b border-gray-50 hover:bg-gray-50">
+        <td class="py-1.5 px-2 text-gray-400">${r.rank||''}</td>
+        <td class="py-1.5 px-2"><span class="text-xs px-1.5 py-0.5 rounded-full ${dc}">${di} ${r.domain||''}</span></td>
+        <td class="py-1.5 px-2 text-gray-700">${escapeHtml(r.action||'')}</td>
+        <td class="py-1.5 px-2 text-gray-500">${escapeHtml(tf)}</td>
+        <td class="py-1.5 px-2 text-gray-500">${escapeHtml(r.responsible||'')}</td>
+        <td class="py-1.5 px-2 text-gray-500">${escapeHtml(r.kpi||'')}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+}
+
+function renderTimingSummary(meta) {
+  if (!meta) return;
+  const panel = document.getElementById('timing-panel');
+  const content = document.getElementById('timing-content');
+  panel.classList.remove('hidden');
+  content.innerHTML = `
+    <div class="grid grid-cols-4 gap-3 text-center">
+      <div class="bg-gray-50 rounded-lg p-2">
+        <p class="text-lg font-bold text-teal-600">${(meta.elapsed_seconds||0).toFixed(1)}s</p>
+        <p class="text-xs text-gray-400">Total time</p>
+      </div>
+      <div class="bg-gray-50 rounded-lg p-2">
+        <p class="text-lg font-bold text-teal-600">${meta.agent_count||6}</p>
+        <p class="text-xs text-gray-400">Agents</p>
+      </div>
+      <div class="bg-gray-50 rounded-lg p-2">
+        <p class="text-lg font-bold text-teal-600">${(meta.topics_analyzed||[]).length}</p>
+        <p class="text-xs text-gray-400">Topics</p>
+      </div>
+      <div class="bg-gray-50 rounded-lg p-2">
+        <p class="text-xs font-mono text-teal-600 break-all">${(meta.notebook_id||'').slice(0,8)}...</p>
+        <p class="text-xs text-gray-400">Notebook</p>
+      </div>
+    </div>`;
+}
+
+// ── Log stream ────────────────────────────────────────────────────────────
+function streamLog(msg, cls='') {
+  const log = document.getElementById('pipeline-log');
+  const ts  = new Date().toLocaleTimeString('th',{hour12:false});
+  const line = document.createElement('div');
+  line.className = cls;
+  line.textContent = `[${ts}] ${msg}`;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('pipeline-log').innerHTML = '<span class="text-gray-600">— Log cleared —</span>';
+}
+
+// ── Copy ──────────────────────────────────────────────────────────────────
+function copyBrief() {
+  const txt = state.lastResponse?.policy_brief || '';
+  navigator.clipboard.writeText(txt).then(() => {
+    const btn = document.querySelector('#result-brief button');
+    const orig = btn.textContent;
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => btn.textContent = orig, 1200);
+  });
+}
+
+function copyText(elId) {
+  const el = document.getElementById(elId);
+  navigator.clipboard.writeText(el.textContent);
+}
+
+// ── Health check ─────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    const r = await fetch(BASE + '/api/health');
+    const d = await r.json();
+    const badge = document.getElementById('health-badge');
+    const ok = d.status === 'ok';
+    badge.className = `flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full ${ok ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`;
+    badge.innerHTML = `<span class="w-2 h-2 rounded-full ${ok ? 'bg-green-400' : 'bg-red-400'}"></span> ${ok ? 'All OK' : 'Degraded'}`;
+  } catch {
+    document.getElementById('health-badge').innerHTML = '<span class="w-2 h-2 rounded-full bg-yellow-400"></span> Offline';
+  }
+}
+
+// ── NLM Ask ───────────────────────────────────────────────────────────────
+async function runNlmAsk() {
+  const province   = document.getElementById('nlm-province').value;
+  const topic      = document.getElementById('nlm-topic').value;
+  const btn        = document.getElementById('nlm-btn');
+  const resultDiv  = document.getElementById('nlm-result');
+  const resultText = document.getElementById('nlm-result-text');
+  const meta       = document.getElementById('nlm-meta');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">⟳</span> Running...';
+  resultDiv.classList.remove('hidden');
+  resultText.textContent = 'กำลังเรียก NotebookLM...';
+
+  const t0 = Date.now();
+  try {
+    const res = await fetch(BASE + '/api/tools/nlm-ask', {
+      method:  'POST',
+      headers: {'Content-Type':'application/json'},
+      body:    JSON.stringify({province, topic, notebook_id: NOTEBOOK_ID})
+    });
+    const text = await res.text();
+    const elapsed = ((Date.now()-t0)/1000).toFixed(1);
+    resultText.textContent = text;
+    meta.textContent = `Elapsed: ${elapsed}s  |  chars: ${text.length}`;
+  } catch(err) {
+    resultText.textContent = 'Error: ' + err;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '▶ Run nlm_ask';
+  }
+}
+
+async function runGetProvinces() {
+  const el = document.getElementById('provinces-result');
+  el.classList.remove('hidden');
+  el.textContent = 'Loading...';
+  try {
+    const r = await fetch(BASE + '/api/policy-brief/provinces');
+    const d = await r.json();
+    el.textContent = JSON.stringify(d, null, 2);
+  } catch(e) {
+    el.textContent = 'Error: ' + e;
+  }
+}
+
+// ── DB Tools ──────────────────────────────────────────────────────────────
+async function callTool(endpoint, body, resultId) {
+  const el = document.getElementById(resultId);
+  el.classList.remove('hidden');
+  el.textContent = 'Loading...';
+  try {
+    const r = await fetch(BASE + endpoint, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    el.textContent = typeof d === 'string' ? d : JSON.stringify(d, null, 2);
+  } catch(e) {
+    el.textContent = 'Error: ' + e;
+  }
+}
+
+async function runHotspots() {
+  const geo  = document.getElementById('hs-province').value;
+  const topn = parseInt(document.getElementById('hs-topn').value) || 10;
+  await callTool('/api/tools/hotspots', {geography:geo, top_n:topn}, 'hs-result');
+}
+
+async function runProvinceYear() {
+  const prov = document.getElementById('py-province').value;
+  const year = parseInt(document.getElementById('py-year').value) || 0;
+  await callTool('/api/tools/province-year', {province:prov, year:year}, 'py-result');
+}
+
+async function runTimeDistribution() {
+  const geo = document.getElementById('td-geo').value;
+  await callTool('/api/tools/time-distribution', {geography:geo}, 'td-result');
+}
+
+async function runSQL() {
+  const sql = document.getElementById('sql-input').value.trim();
+  if (!sql) return;
+  const el = document.getElementById('sql-result');
+  el.classList.remove('hidden');
+  el.textContent = 'Running...';
+  try {
+    const r = await fetch(BASE + '/api/tools/sql', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({sql})
+    });
+    const d = await r.json();
+    el.textContent = typeof d === 'string' ? d : JSON.stringify(d, null, 2);
+  } catch(e) {
+    el.textContent = 'Error: ' + e;
+  }
+}
+
+// ── Data tab ─────────────────────────────────────────────────────────────
+const PROVINCE_COLORS = {
+  'มุกดาหาร':'bg-purple-50 text-purple-700',
+  'ยโสธร':'bg-blue-50 text-blue-700',
+  'ศรีสะเกษ':'bg-orange-50 text-orange-700',
+  'อำนาจเจริญ':'bg-pink-50 text-pink-700',
+  'อุบลราชธานี':'bg-teal-50 text-teal-700',
+};
+
+function loadSourcesTable() {
+  const tbody = document.getElementById('sources-table');
+  const docs = [
+    {file:'เอกสารรับตรวจ จ.มุกดาหาร รอบ2-64', province:'มุกดาหาร', type:'RTI/Mental/NCD', year:'2564', status:'ready'},
+    {file:'เอกสารรับตรวจ จ.ยโสธร รอบ2-64',    province:'ยโสธร',    type:'RTI/Mental/NCD', year:'2564', status:'ready'},
+    {file:'เอกสารรับตรวจ จ.ศรีสะเกษ รอบ2-64', province:'ศรีสะเกษ', type:'RTI/Mental/NCD', year:'2564', status:'ready'},
+    {file:'เอกสารรับตรวจ จ.อำนาจเจริญ รอบ2-64',province:'อำนาจเจริญ',type:'RTI/Mental/NCD',year:'2564', status:'ready'},
+    {file:'เอกสารรับตรวจ จ.อุบลราชธานี รอบ2-64',province:'อุบลราชธานี',type:'RTI/Mental/NCD',year:'2564',status:'ready'},
+  ];
+  tbody.innerHTML = docs.map(d => {
+    const pc = PROVINCE_COLORS[d.province] || 'bg-gray-50 text-gray-700';
+    const sc = d.status==='ready' ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700';
+    const si = d.status==='ready' ? '●' : '⟳';
+    return `<tr class="border-b border-gray-50 hover:bg-gray-50">
+      <td class="py-2 px-2"><span class="text-xs px-2 py-0.5 rounded-full ${pc}">${d.province}</span></td>
+      <td class="py-2 px-2 text-gray-600">${d.file}</td>
+      <td class="py-2 px-2 text-gray-400">${d.type}</td>
+      <td class="py-2 px-2 text-gray-500">${d.year}</td>
+      <td class="py-2 px-2"><span class="text-xs px-2 py-0.5 rounded-full ${sc}">${si} ${d.status}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadProvinceList() {
+  try {
+    const r = await fetch(BASE + '/api/policy-brief/provinces');
+    const d = await r.json();
+    // Just refresh the table for now
+    loadSourcesTable();
+  } catch { loadSourcesTable(); }
+}
+
+async function loadDBStats() {
+  try {
+    const r = await fetch(BASE + '/api/tools/db-stats');
+    const d = await r.json();
+    if (d.accident_events) document.getElementById('db-accidents').textContent = Number(d.accident_events).toLocaleString();
+    if (d.embeddings)      document.getElementById('db-embeddings').textContent = Number(d.embeddings).toLocaleString();
+  } catch { /* silent */ }
+}
+
+// ── Utility ───────────────────────────────────────────────────────────────
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+// ── Chart rendering (from test_ui.html) ───────────────────────────────────────
+const PALETTE = [
+  '#6366f1','#f59e0b','#ef4444','#10b981','#3b82f6',
+  '#8b5cf6','#ec4899','#14b8a6','#f97316','#84cc16'
+];
+
+function toNumeric(v) {
+  if (v === null || v === undefined) return null;
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  if (typeof v === 'string') {
+    const c = v.replace(/,/g,'').replace(/%/g,'').trim();
+    if (!c) return null;
+    const p = Number(c);
+    return isNaN(p) ? null : p;
+  }
+  return null;
+}
+
+let _chartCounter = 0;
+
+function renderCharts(charts, container) {
+  if (!charts || !charts.length) return;
+  charts.forEach(function(spec) {
+    const id = 'chart-' + (++_chartCounter);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'chart-card';
+
+    const titleEl = document.createElement('p');
+    titleEl.className = 'text-sm font-semibold text-gray-700 mb-2';
+    titleEl.textContent = spec.title || 'กราฟ';
+    wrapper.appendChild(titleEl);
+
+    const canvasWrap = document.createElement('div');
+    canvasWrap.style.height = '280px';
+    canvasWrap.style.position = 'relative';
+    const canvas = document.createElement('canvas');
+    canvas.id = id;
+    canvasWrap.appendChild(canvas);
+    wrapper.appendChild(canvasWrap);
+
+    if (spec.source_note) {
+      const note = document.createElement('p');
+      note.className = 'text-xs text-gray-400 mt-1';
+      note.textContent = 'แหล่งข้อมูล: ' + spec.source_note;
+      wrapper.appendChild(note);
+    }
+    container.appendChild(wrapper);
+
+    const nestedData = spec.data && typeof spec.data === 'object' ? spec.data : null;
+    const labels = (nestedData && Array.isArray(nestedData.labels) ? nestedData.labels : []).map(String);
+    const rawDs = nestedData && Array.isArray(nestedData.datasets) ? nestedData.datasets : [];
+    const chartType = String(spec.type || 'bar').toLowerCase();
+
+    const datasets = rawDs.map(function(ds, i) {
+      const base = { label: ds.label || 'ข้อมูล', data: (ds.data || []).map(toNumeric) };
+      if (chartType === 'line') {
+        const c = (Array.isArray(ds.borderColor) ? ds.borderColor[0] : ds.borderColor) || PALETTE[i % PALETTE.length];
+        return Object.assign(base, { borderColor: c, backgroundColor: c + '30', borderWidth: 2.5, tension: 0.4, pointRadius: 4, fill: true });
+      } else if (chartType === 'pie' || chartType === 'doughnut') {
+        return Object.assign(base, { backgroundColor: PALETTE.slice(0, base.data.length), borderWidth: 1, borderColor: '#fff' });
+      } else {
+        const c = (Array.isArray(ds.backgroundColor) ? ds.backgroundColor[0] : ds.backgroundColor) || PALETTE[i % PALETTE.length];
+        return Object.assign(base, { backgroundColor: c, borderRadius: 4 });
+      }
+    });
+
+    if (typeof Chart === 'undefined') { wrapper.innerHTML += '<p class="text-xs text-red-400">Chart.js ไม่พร้อม</p>'; return; }
+    new Chart(canvas.getContext('2d'), {
+      type: chartType,
+      data: { labels, datasets },
+      options: Object.assign({
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, position: 'top' }, title: { display: false } },
+        scales: (chartType === 'pie' || chartType === 'doughnut') ? {} : {
+          x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          y: { beginAtZero: true, ticks: { font: { size: 10 } } },
+        },
+      }, spec.options || {}),
+    });
+  });
+}
+
+// ── Chat ─────────────────────────────────────────────────────────────────
+function handleChatKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+function setChatMode(mode) {
+  state.chatMode = mode;
+  const btnFull  = document.getElementById('mode-btn-full');
+  const btnShort = document.getElementById('mode-btn-short');
+  const hint     = document.getElementById('mode-hint');
+  const input    = document.getElementById('chat-input');
+  const qFull    = document.getElementById('quick-prompts-full');
+  const qShort   = document.getElementById('quick-prompts-short');
+  const sendBtn  = document.getElementById('chat-send-btn');
+
+  if (mode === 'full') {
+    btnFull.className  = 'mode-btn active-full';
+    btnShort.className = 'mode-btn';
+    hint.textContent   = '~3–5 นาที · กราฟ + รายงานเชิงลึก';
+    input.placeholder  = "ถามเกี่ยวกับข้อมูลอุบัติเหตุ หรือขอ Policy Brief เช่น 'สร้าง policy brief จ.อุบลราชธานี'...";
+    sendBtn.className  = 'px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg self-end transition-all';
+    qFull.classList.remove('hidden');
+    qShort.classList.add('hidden');
+  } else {
+    btnFull.className  = 'mode-btn';
+    btnShort.className = 'mode-btn active-short';
+    hint.textContent   = '~30–60 วินาที · คำตอบสั้น ไม่มีกราฟ';
+    input.placeholder  = "ถามสั้น ๆ เช่น 'จุดเสี่ยงอุบลฯ', 'อุบัติเหตุ 2024 ลดหรือเพิ่ม?'";
+    sendBtn.className  = 'px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-medium rounded-lg self-end transition-all';
+    qFull.classList.add('hidden');
+    qShort.classList.remove('hidden');
+  }
+}
+
+function sendQuick(text) {
+  document.getElementById('chat-input').value = text;
+  sendChat();
+}
+
+async function sendChat() {
+  if (state.chatMode === 'short') { sendShortChat(); return; }
+
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg || state.chatLoading) return;
+
+  input.value = '';
+  state.chatLoading = true;
+  document.getElementById('chat-send-btn').disabled = true;
+  document.getElementById('chat-send-btn').innerHTML = '<span class="spin">⟳</span>';
+  document.getElementById('chat-status').textContent = 'กำลังเชื่อมต่อ...';
+  document.getElementById('chat-follow-ups').classList.add('hidden');
+
+  // Hide empty state
+  document.getElementById('chat-empty').style.display = 'none';
+
+  // Append user bubble
+  appendChatBubble('user', msg);
+
+  // Append loading bubble with timeline
+  const loadId = 'load-' + Date.now();
+  appendLoadingBubbleWithTimeline(loadId);
+
+  const t0 = Date.now();
+  let finalData = null;
+
+  try {
+    // Use SSE streaming endpoint
+    const res = await fetch(BASE + '/api/chat/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg, session_id: null})
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, {stream: true});
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          handleStreamEvent(event, loadId, t0);
+          if (event.type === 'content') {
+            finalData = {
+              pipeline_used: event.data?.metadata?.pipeline_used || 'unknown',
+              routing: {},
+              result: event.data
+            };
+          }
+          if (event.type === 'done') {
+            finalData = finalData || {};
+            finalData.pipeline_used = event.pipeline;
+          }
+        } catch (e) { /* ignore parse errors */ }
+      }
+    }
+
+    // Remove loading bubble and show result
+    document.getElementById(loadId)?.remove();
+
+    if (finalData) {
+      appendChatBubble('agent', null, null, finalData);
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      document.getElementById('chat-status').textContent = `Response in ${elapsed}s · ${finalData.pipeline_used || ''}`;
+    }
+
+  } catch(err) {
+    document.getElementById(loadId)?.remove();
+    appendChatBubble('error', '❌ Network error: ' + err);
+  } finally {
+    state.chatLoading = false;
+    const btn = document.getElementById('chat-send-btn');
+    btn.disabled = false;
+    btn.innerHTML = '➤ ส่ง';
+    document.getElementById('chat-input').focus();
+  }
+}
+
+async function sendShortChat() {
+  const input = document.getElementById('chat-input');
+  const msg = input.value.trim();
+  if (!msg || state.chatLoading) return;
+
+  input.value = '';
+  state.chatLoading = true;
+  document.getElementById('chat-send-btn').disabled = true;
+  document.getElementById('chat-send-btn').innerHTML = '<span class="spin">⟳</span>';
+  document.getElementById('chat-status').textContent = 'กำลังค้นหา (ถามสั้น)...';
+  document.getElementById('chat-follow-ups').classList.add('hidden');
+  document.getElementById('chat-empty').style.display = 'none';
+
+  appendChatBubble('user', msg);
+
+  // Simple 3-dot loading bubble (no timeline for short chat)
+  const loadId = 'load-' + Date.now();
+  const scroll = document.getElementById('chat-scroll');
+  const loadEl = document.createElement('div');
+  loadEl.id = loadId;
+  loadEl.className = 'chat-bubble chat-msg';
+  loadEl.innerHTML = `
+    <div class="flex gap-2">
+      <div class="w-7 h-7 bg-gradient-to-br from-orange-400 to-amber-500 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">M</div>
+      <div class="bg-white border border-orange-100 rounded-2xl rounded-tl-sm px-4 py-3">
+        <div class="flex items-center gap-2">
+          <span class="loading-dots text-orange-400 text-sm"><span>●</span> <span>●</span> <span>●</span></span>
+          <span class="text-xs text-gray-400">ถามสั้น — กำลังค้นหา...</span>
+        </div>
+      </div>
+    </div>`;
+  scroll.appendChild(loadEl);
+  scroll.scrollTop = scroll.scrollHeight;
+
+  const t0 = Date.now();
+
+  try {
+    const res = await fetch(BASE + '/api/chat/short', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message: msg, session_id: null})
+    });
+
+    loadEl.remove();
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+
+    appendShortChatBubble(data, elapsed);
+    document.getElementById('chat-status').textContent = `ถามสั้น ตอบใน ${elapsed}s`;
+
+    // Show follow-ups if present
+    if (data.follow_up_questions?.length) {
+      const fuList = document.getElementById('chat-follow-ups-list');
+      fuList.innerHTML = '';
+      data.follow_up_questions.forEach(q => {
+        const btn = document.createElement('button');
+        btn.className = 'quick-q short';
+        btn.textContent = q;
+        btn.onclick = () => { setChatMode('short'); document.getElementById('chat-input').value = q; sendShortChat(); };
+        fuList.appendChild(btn);
+      });
+      document.getElementById('chat-follow-ups').classList.remove('hidden');
+    }
+
+  } catch(err) {
+    loadEl.remove();
+    appendChatBubble('error', '❌ Network error: ' + err);
+  } finally {
+    state.chatLoading = false;
+    const btn = document.getElementById('chat-send-btn');
+    btn.disabled = false;
+    btn.innerHTML = '➤ ส่ง';
+    document.getElementById('chat-input').focus();
+  }
+}
+
+function appendShortChatBubble(data, elapsed) {
+  const scroll = document.getElementById('chat-scroll');
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-bubble chat-msg';
+
+  // Build mini citations
+  const citations = data.citations || [];
+  let citeHtml = '';
+  if (citations.length) {
+    citeHtml = `<div class="mt-3 pt-2 border-t border-orange-100">
+      <p class="text-xs font-semibold text-orange-600 mb-1">📎 อ้างอิงเบื้องต้น (${citations.length} รายการ)</p>
+      <div class="space-y-0.5">` +
+      citations.slice(0, 5).map(c =>
+        `<p class="text-xs text-gray-500">[${c.code || '?'}] ${c.bibliography_text ? c.bibliography_text.substring(0, 120) + '…' : ''}</p>`
+      ).join('') +
+      `</div>
+      <p class="text-xs text-amber-600 mt-2 italic">⚠️ อ้างอิงเบื้องต้น — ใช้ "รายงานเต็ม" สำหรับ APA ที่ตรวจสอบแล้ว</p>
+    </div>`;
+  }
+
+  const contentHtml = data.content
+    ? `<div class="prose text-sm">${marked.parse(data.content)}</div>`
+    : '<p class="text-sm text-gray-400">ไม่มีข้อมูลที่ตอบได้</p>';
+
+  wrap.innerHTML = `
+    <div class="flex gap-2">
+      <div class="w-7 h-7 bg-gradient-to-br from-orange-400 to-amber-500 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">M</div>
+      <div class="bg-white border border-orange-100 rounded-2xl rounded-tl-sm px-4 py-3 flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="mode-badge-short">💬 ถามสั้น</span>
+          <span class="text-xs text-gray-400">${elapsed}s</span>
+          <button onclick="this.closest('.chat-bubble').querySelector('.prose')?.closest('div')?.querySelector('*')?.parentElement?.innerText && navigator.clipboard.writeText(this.closest('.chat-bubble').querySelector('.prose')?.innerText||'')"
+                  class="msg-copy text-xs text-gray-400 hover:text-gray-600 ml-auto">📋</button>
+        </div>
+        ${contentHtml}
+        ${citeHtml}
+      </div>
+    </div>`;
+
+  scroll.appendChild(wrap);
+  scroll.scrollTop = scroll.scrollHeight;
+}
+
+function appendLoadingBubbleWithTimeline(id) {
+  const scroll = document.getElementById('chat-scroll');
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-bubble chat-msg';
+  wrap.id = id;
+  wrap.innerHTML = `
+    <div class="flex gap-2">
+      <div class="w-7 h-7 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">M</div>
+      <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 min-w-[280px]">
+        <div class="flex items-center gap-2 mb-2">
+          <span class="loading-dots text-teal-500 text-sm"><span>●</span> <span>●</span> <span>●</span></span>
+          <span class="text-xs text-gray-400">กำลังประมวลผล...</span>
+        </div>
+        <div id="${id}-timeline" class="agent-timeline"></div>
+      </div>
+    </div>`;
+  scroll.appendChild(wrap);
+  scroll.scrollTop = scroll.scrollHeight;
+}
+
+function handleStreamEvent(event, loadId, t0) {
+  const timeline = document.getElementById(loadId + '-timeline');
+  if (!timeline) return;
+
+  if (event.type === 'start') {
+    document.getElementById('chat-status').textContent = 'กำลังวิเคราะห์คำขอ...';
+  }
+
+  if (event.type === 'routing') {
+    const r = event.data || {};
+    document.getElementById('chat-status').textContent = 
+      `Pipeline: ${r.pipeline || '?'} (${((r.confidence||0)*100).toFixed(0)}%)`;
+  }
+
+  if (event.type === 'agent_progress') {
+    const p = event.data || {};
+    updateAgentTimeline(timeline, p, t0);
+  }
+
+  if (event.type === 'error') {
+    document.getElementById('chat-status').textContent = '❌ ' + (event.message || 'Error');
+  }
+
+  // Scroll to bottom
+  const scroll = document.getElementById('chat-scroll');
+  scroll.scrollTop = scroll.scrollHeight;
+}
+
+function updateAgentTimeline(timeline, progress, t0) {
+  const agentId = progress.agent_name.replace(/\s+/g, '-').toLowerCase();
+  let step = timeline.querySelector(`[data-agent="${agentId}"]`);
+
+  const statusIcon = {
+    running: '⟳',
+    done: '✓',
+    error: '✗',
+    waiting: '○'
+  };
+  const elapsed = progress.elapsed_seconds ? `${progress.elapsed_seconds.toFixed(1)}s` : '';
+
+  if (!step) {
+    // Create new step
+    step = document.createElement('div');
+    step.className = `agent-step ${progress.status}`;
+    step.setAttribute('data-agent', agentId);
+    step.innerHTML = `
+      <div class="icon">${progress.agent_icon || statusIcon[progress.status]}</div>
+      <span class="name">${escapeHtml(progress.agent_name)}</span>
+      <span class="msg">${escapeHtml(progress.message || '')}</span>
+      <span class="time">${elapsed}</span>
+    `;
+    timeline.appendChild(step);
+  } else {
+    // Update existing step
+    step.className = `agent-step ${progress.status}`;
+    step.querySelector('.icon').textContent = progress.agent_icon || statusIcon[progress.status];
+    step.querySelector('.msg').textContent = progress.message || '';
+    step.querySelector('.time').textContent = elapsed;
+  }
+}
+
+function showChatFollowUps(followUps) {
+  const container = document.getElementById('chat-follow-ups');
+  const list = document.getElementById('chat-follow-ups-list');
+  if (!followUps || !followUps.length) { container.classList.add('hidden'); return; }
+  list.innerHTML = followUps.map(q =>
+    `<button onclick="sendQuick(${JSON.stringify(q)})" class="quick-q">${escapeHtml(q)}</button>`
+  ).join('');
+  container.classList.remove('hidden');
+}
+
+function clearChat() {
+  document.getElementById('chat-scroll').innerHTML = `
+    <div id="chat-empty" class="text-center py-16">
+      <div class="w-16 h-16 mx-auto mb-4 bg-gradient-to-br from-teal-100 to-emerald-100 rounded-2xl flex items-center justify-center">
+        <span class="text-3xl">🤖</span>
+      </div>
+      <h2 class="text-lg font-semibold text-gray-700 mb-1">Musya Agent — Unified Chat</h2>
+      <p class="text-sm text-gray-400">เลือกโหมด แล้วถามข้อมูลอุบัติเหตุหรือขอ Policy Brief</p>
+      <div class="mt-3 flex justify-center gap-2 text-xs flex-wrap">
+        <span class="bg-gray-100 text-gray-500 px-2 py-1 rounded-full">🔀 Auto-routing</span>
+        <span class="bg-teal-50 text-teal-600 px-2 py-1 rounded-full">📊 รายงานเต็ม ~3–5 นาที</span>
+        <span class="bg-emerald-50 text-emerald-600 px-2 py-1 rounded-full">📋 Policy Brief</span>
+        <span class="bg-orange-50 text-orange-600 px-2 py-1 rounded-full">💬 ถามสั้น ~30–60 วินาที</span>
+      </div>
+    </div>`;
+  document.getElementById('chat-follow-ups').classList.add('hidden');
+  document.getElementById('chat-status').textContent = '';
+}
+
+function appendChatBubble(role, text, id, unifiedData) {
+  const scroll = document.getElementById('chat-scroll');
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-bubble chat-msg';
+  if (id) wrap.id = id;
+
+  if (role === 'user') {
+    wrap.innerHTML = `
+      <div class="flex justify-end">
+        <div class="max-w-2xl bg-teal-600 text-white text-sm rounded-2xl rounded-tr-sm px-4 py-2.5">
+          ${escapeHtml(text)}
+        </div>
+      </div>`;
+  } else if (role === 'loading') {
+    wrap.innerHTML = `
+      <div class="flex gap-2">
+        <div class="w-7 h-7 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0">M</div>
+        <div class="bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-2.5">
+          <div class="loading-dots text-teal-500 text-sm"><span>●</span> <span>●</span> <span>●</span></div>
+          <p class="text-xs text-gray-400 mt-1">กำลังวิเคราะห์ผ่าน Agent pipeline...</p>
+        </div>
+      </div>`;
+  } else if (role === 'error') {
+    wrap.innerHTML = `
+      <div class="flex gap-2">
+        <div class="w-7 h-7 bg-red-100 rounded-full flex items-center justify-center text-red-500 text-xs font-bold shrink-0">!</div>
+        <div class="bg-red-50 border border-red-200 rounded-2xl rounded-tl-sm px-4 py-2.5 text-sm text-red-700">${escapeHtml(text)}</div>
+      </div>`;
+  } else if (role === 'agent' && unifiedData) {
+    wrap.innerHTML = buildAgentBubble(unifiedData);
+  }
+
+  scroll.appendChild(wrap);
+  scroll.scrollTop = scroll.scrollHeight;
+
+  // Post-process [C-xxx] inline citations in chat pipeline bubble
+  // citeMap was fully enriched in buildAgentBubble (result.citations + markdown parse + _refDocs)
+  if (unifiedData && unifiedData.pipeline_used !== 'policy_brief_pipeline') {
+    const inner = wrap.querySelector('[data-inner]');
+    if (inner) {
+      let citeMap = {};
+      try { citeMap = JSON.parse(inner.dataset.citeMap || '{}'); } catch(e) {}
+      inner.innerHTML = inner.innerHTML.replace(/\[C-(\d{3})\]/g, (match, num) => {
+        const code = 'C-' + num;
+        const c = citeMap[code];
+        if (!c) return match;
+        const bib = escapeHtml(c.bibliography_text || c.citation_text || c.source_ref || code);
+        const url = c.open_url || '';
+        const clickAttr = url ? `onclick="window.open('${url}','_blank')" style="cursor:pointer"` : '';
+        return `<span class="citation-tooltip-wrapper" ${clickAttr}>` +
+          `<span class="citation-inline">[${code}]</span>` +
+          `<span class="citation-tooltip">${bib}` +
+          (url ? `<br><a href="${url}" target="_blank" rel="noopener" class="citation-tooltip-link">🔗 เปิดเอกสาร PDF</a>` : '') +
+          `</span></span>`;
+      });
+    }
+  }
+
+  // Post-process [C-xxx] in policy brief bubble domain sections
+  // _bubbleCiteMap is embedded in data-bubble-cite-map attribute
+  if (unifiedData && unifiedData.pipeline_used === 'policy_brief_pipeline') {
+    const citeMapEl = wrap.querySelector('[data-bubble-cite-map]');
+    let localMap = {};
+    if (citeMapEl) {
+      try { localMap = JSON.parse(citeMapEl.dataset.bubbleCiteMap || '{}'); } catch(e) {}
+    }
+    // Process all domain section divs + citation tab
+    wrap.querySelectorAll('[id$="-sec-rti"],[id$="-sec-mental"],[id$="-sec-ncd"],[id$="-sec-cross"],[id$="-sec-brief"],[id$="-sec-cite"]').forEach(sec => {
+      sec.innerHTML = sec.innerHTML.replace(/\[C-(\d{3})\]/g, (match, num) => {
+        const code = 'C-' + num;
+        const c = localMap[code];
+        if (!c) return match;
+        const bib = escapeHtml(c.bibliography_text || c.citation_text || c.source_ref || code);
+        const url = c.open_url || '';
+        const clickAttr = url ? `onclick="window.open('${url}','_blank')" style="cursor:pointer"` : '';
+        return `<span class="citation-tooltip-wrapper" ${clickAttr}>` +
+          `<span class="citation-inline">[${code}]</span>` +
+          `<span class="citation-tooltip">${bib}` +
+          (url ? `<br><a href="${url}" target="_blank" rel="noopener" class="citation-tooltip-link">🔗 เปิดเอกสาร PDF</a>` : '') +
+          `</span></span>`;
+      });
+      // Also append 🔗 inline after reference-list lines ending with [C-xxx]
+      // Pattern: "...APA text... [C-xxx]" — add link after the span
+      sec.innerHTML = sec.innerHTML.replace(
+        /(<span class="citation-tooltip-wrapper"[^>]*>.*?<\/span><\/span>)(?=\s*(?:<\/p>|<\/li>|<br|\n|$))/g,
+        (match, citSpan) => {
+          const codeM = citSpan.match(/citation-inline">\[([^\]]+)\]/);
+          const code2 = codeM ? codeM[1] : '';
+          const c2 = localMap[code2];
+          const url2 = c2 && c2.open_url ? c2.open_url : '';
+          if (!url2) return match;
+          return match + ` <a href="${url2}" target="_blank" rel="noopener" class="text-teal-500 hover:text-teal-700 align-middle" title="เปิดเอกสารต้นฉบับ">🔗</a>`;
+        }
+      );
+    });
+  }
+
+  // Inject charts into chat_pipeline bubble via data-inner
+  if (unifiedData && unifiedData.pipeline_used !== 'policy_brief_pipeline') {
+    const charts = unifiedData.result?.charts || [];
+    if (charts.length) {
+      const inner = wrap.querySelector('[data-inner]') || wrap.firstElementChild?.firstElementChild;
+      if (inner) renderCharts(charts, inner);
+    }
+  }
+
+  // Show follow-ups from chat_pipeline
+  if (unifiedData && unifiedData.pipeline_used !== 'policy_brief_pipeline') {
+    const followups = unifiedData.result?.follow_ups || [];
+    showChatFollowUps(followups);
+  }
+
+  // Also stream to pipeline log
+  if (unifiedData) {
+    const pipe = unifiedData.pipeline_used || 'unknown';
+    const conf = unifiedData.routing?.confidence || 0;
+    streamLog(`✅ [UNIFIED] pipeline=${pipe} confidence=${(conf*100).toFixed(0)}%`, 'log-done');
+  }
+
+  return wrap;
+}
+
+function buildAgentBubble(data) {
+  const pipeline = data.pipeline_used || 'chat_pipeline';
+  const isPolicyBrief = pipeline === 'policy_brief_pipeline';
+  const routing = data.routing || {};
+  const result  = data.result  || {};
+
+  const pipeLabel = isPolicyBrief
+    ? `<span class="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs px-2 py-0.5 rounded-full">📋 Policy Brief Pipeline</span>`
+    : `<span class="bg-teal-50 text-teal-700 border border-teal-200 text-xs px-2 py-0.5 rounded-full">📊 Chat Pipeline</span>`;
+  const confBadge = `<span class="text-xs text-gray-400">confidence: ${((routing.confidence||0)*100).toFixed(0)}%</span>`;
+  const reasonNote = routing.reason ? `<p class="text-xs text-gray-400 italic mt-0.5">${escapeHtml(routing.reason)}</p>` : '';
+
+  let body = '';
+
+  if (isPolicyBrief) {
+    // Per-domain tabs inside bubble
+    const sections = result.sections || {};
+    const province = result.province || '';
+    const elapsed  = result.metadata?.elapsed_seconds || 0;
+    const bubbleId = 'bubble-' + Date.now();
+
+    const tabs = [];
+    if (sections.rti)    tabs.push({key:'rti',    icon:'🚗', label:'RTI'});
+    if (sections.mental) tabs.push({key:'mental', icon:'🧠', label:'สุขภาพจิต'});
+    if (sections.ncd)    tabs.push({key:'ncd',    icon:'🍎', label:'NCD'});
+    const crossLinks = result.cross_topic_links || [];
+    const citations  = result.citations || [];
+
+    // ── Build _bubbleCiteMap: 3-step enrichment ──
+    // Step 1: seed from result.citations
+    const _bubbleCiteMap = {};
+    citations.forEach(c => { if (c.citation_code) _bubbleCiteMap[c.citation_code] = c; });
+
+    // Step 2: parse [C-xxx] reference lines from all section text
+    // Handles "[C-200] APA text" (code first) and "APA text [C-200]" (code last)
+    const _allSecText = Object.values(sections).join('\n') + '\n' + (result.policy_brief || '');
+    const _pbReFwd = /^\[C-(\d{3})\]\s+(.{10,})/gm;
+    const _pbReRev = /^(.{10,})\s+\[C-(\d{3})\]\s*$/gm;
+    let _rm;
+    while ((_rm = _pbReFwd.exec(_allSecText)) !== null) {
+      const code = 'C-' + _rm[1], apa = _rm[2].trim().slice(0, 300);
+      if (!_bubbleCiteMap[code])
+        _bubbleCiteMap[code] = {citation_code:code, source_type:'document', source_ref:'', citation_text:'', bibliography_text:apa, open_url:''};
+      else if (!_bubbleCiteMap[code].bibliography_text)
+        _bubbleCiteMap[code].bibliography_text = apa;
+    }
+    while ((_rm = _pbReRev.exec(_allSecText)) !== null) {
+      const code = 'C-' + _rm[2], apa = _rm[1].trim().slice(0, 300);
+      if (!_bubbleCiteMap[code])
+        _bubbleCiteMap[code] = {citation_code:code, source_type:'document', source_ref:'', citation_text:'', bibliography_text:apa, open_url:''};
+      else if (!_bubbleCiteMap[code].bibliography_text)
+        _bubbleCiteMap[code].bibliography_text = apa;
+    }
+
+    // Step 3: enrich open_url from _refDocs — match by title OR apa_authors first word
+    Object.values(_bubbleCiteMap).forEach(c => {
+      if (c.open_url) return;
+      const bib = (c.bibliography_text || '').toLowerCase();
+      if (!bib || !_refDocs.length) return;
+      // Extract first word of the bib text (LLM-generated author or title)
+      const bibFirstWord = bib.replace(/[^ก-๙a-z0-9]/g,' ').trim().split(/\s+/)[0] || '';
+      const hit = _refDocs.find(d => {
+        // Match by first word of document title
+        const t = (d.title || '').toLowerCase();
+        const titleFw = t.replace(/[^ก-๙a-z0-9\s]/g,'').trim().split(/\s+/)[0] || '';
+        if (titleFw.length >= 4 && bib.includes(titleFw)) return true;
+        // Match by first word of apa_authors against bib text
+        const a = ((d.apa && d.apa.authors) || '').toLowerCase();
+        const authorFw = a.replace(/[^ก-๙a-z0-9\s]/g,' ').trim().split(/\s+/)[0] || '';
+        if (authorFw.length >= 4 && bib.includes(authorFw)) return true;
+        // Match by bib first word against apa_authors
+        return bibFirstWord.length >= 4 && a.includes(bibFirstWord);
+      });
+      if (hit && hit.open_url) c.open_url = hit.open_url;
+    });
+
+    const _pbCiteEntries = Object.values(_bubbleCiteMap).filter(c => c.bibliography_text || c.citation_text);
+
+    if (crossLinks.length) tabs.push({key:'cross', icon:'🔗', label:'Cross'});
+    if (_pbCiteEntries.length) tabs.push({key:'cite', icon:'🔖', label:'อ้างอิง'});
+
+    const tabNav = tabs.map((t,i) =>
+      `<button onclick="bubbleTab('${bubbleId}','${t.key}')" id="${bubbleId}-tab-${t.key}"
+               class="text-xs px-3 py-1.5 font-medium ${
+                 i===0 ? 'text-teal-700 border-b-2 border-teal-500' : 'text-gray-500 hover:text-gray-700'
+               }">${t.icon} ${t.label}</button>`
+    ).join('');
+
+    const domainContent = tabs.filter(t => sections[t.key]).map((t, i) => {
+      const isMental = t.key === 'mental';
+      const disclaimer = isMental
+        ? `<div class="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3 text-xs text-amber-800">
+             <p class="font-semibold">⚠️ ข้อมูลนี้จัดทำเพื่อวางแผนนโยบายภายในเท่านั้น ไม่ใช่สำหรับสื่อมวลชน</p></div>` : '';
+      return `<div id="${bubbleId}-sec-${t.key}" class="${i===0?'':'hidden'} prose text-sm max-h-96 overflow-y-auto">
+        ${disclaimer}${marked.parse(sections[t.key])}
+      </div>`;
+    }).join('');
+
+    let crossHtml = '';
+    if (crossLinks.length) {
+      crossHtml = `<div id="${bubbleId}-sec-cross" class="hidden space-y-2">${
+        crossLinks.map(lnk => `<div class="bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs text-gray-700">${escapeHtml(lnk)}</div>`).join('')
+      }</div>`;
+    }
+
+    let citeHtml = '';
+    if (_pbCiteEntries.length) {
+      const srcIcon2 = {notebooklm_pdf:'📄', database:'🗄️', document:'📝'};
+      citeHtml = `<div id="${bubbleId}-sec-cite" class="hidden space-y-1">${
+        _pbCiteEntries.map(c => {
+          const bibText = c.bibliography_text || c.citation_text || c.source_ref || '';
+          const linkIcon = c.open_url
+            ? ` <a href="${c.open_url}" target="_blank" rel="noopener"
+                class="text-teal-500 hover:text-teal-700 ml-0.5 align-middle"
+                title="เปิดเอกสารต้นฉบับในแท็บใหม่">🔗</a>`
+            : '';
+          return `<div class="flex gap-2 py-1.5 border-b border-gray-100 text-xs items-start">
+            <span class="font-mono bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded shrink-0">${escapeHtml(c.citation_code||'')}</span>
+            <span class="text-gray-600 min-w-0 leading-relaxed">${srcIcon2[c.source_type]||'📎'} ${escapeHtml(bibText)}${linkIcon}</span>
+          </div>`;
+        }).join('')
+      }</div>`;
+    }
+
+    // Register combined text for copy
+    _bubbleReports[bubbleId] = result.policy_brief || Object.values(sections).join('\n\n---\n\n');
+
+    body = `
+      <div data-bubble-cite-map='${JSON.stringify(_bubbleCiteMap).replace(/'/g,"&#39;")}' style="display:none"></div>
+      <div class="text-xs text-gray-500 mb-2 flex items-center gap-2">
+        <span class="font-medium text-gray-700">📋 ${escapeHtml(province)}</span>
+        <span>⏱ ${elapsed.toFixed(1)}s</span>
+        <button onclick="copyBubbleReport('${bubbleId}')" class="ml-auto text-xs bg-gray-100 hover:bg-gray-200 text-gray-500 px-2 py-0.5 rounded">📋 Copy</button>
+      </div>
+      <div class="flex gap-1 border-b border-gray-100 mb-3">${tabNav}</div>
+      ${domainContent}${crossHtml}${citeHtml}`;
+  } else {
+    // Chat pipeline — render markdown content with data-inner for chart injection
+    const content  = result.content || result.policy_brief || JSON.stringify(result).slice(0, 2000);
+    const elapsed  = result.metadata?.elapsed_seconds || 0;
+    const topic    = result.topic || '';
+    const agents   = result.metadata?.agent_count || 0;
+    const chartCnt = (result.charts || []).length;
+    const chatCitations = result.citations || [];
+
+    // ── Step 1: seed map from result.citations (may be empty) ──
+    const _chatCiteMap = {};
+    chatCitations.forEach(c => {
+      if (c.citation_code) _chatCiteMap[c.citation_code] = c;
+    });
+
+    // ── Step 2: parse [C-xxx] reference-list lines from the raw markdown ──
+    // The LLM writes lines like: "[C-002] Author. (Year). Title. Publisher."
+    // Extract them so we can add 🔗 links even when result.citations is empty.
+    const refLineRe = /^\[C-(\d{3})\]\s+(.{10,})/gm;
+    let rlm;
+    while ((rlm = refLineRe.exec(content)) !== null) {
+      const code = 'C-' + rlm[1];
+      const apa  = rlm[2].trim().slice(0, 300);
+      if (!_chatCiteMap[code]) {
+        // No entry from result.citations — create one from the text
+        _chatCiteMap[code] = {
+          citation_code: code,
+          source_type: 'document',
+          source_ref: '',
+          citation_text: '',
+          bibliography_text: apa,
+          open_url: '',
+        };
+      } else if (!_chatCiteMap[code].bibliography_text) {
+        _chatCiteMap[code].bibliography_text = apa;
+      }
+    }
+
+    // ── Step 3: enrich open_url from _refDocs — match by title OR apa_authors first word ──
+    Object.values(_chatCiteMap).forEach(c => {
+      if (c.open_url) return;
+      const bib = (c.bibliography_text || '').toLowerCase();
+      if (!bib || !_refDocs.length) return;
+      const bibFirstWord = bib.replace(/[^ก-๙a-z0-9]/g,' ').trim().split(/\s+/)[0] || '';
+      const hit = _refDocs.find(d => {
+        // Match by first word of document title
+        const t = (d.title || '').toLowerCase();
+        const titleFw = t.replace(/[^ก-๙a-z0-9\s]/g,'').trim().split(/\s+/)[0] || '';
+        if (titleFw.length >= 4 && bib.includes(titleFw)) return true;
+        // Match by first word of apa_authors against bib text
+        const a = ((d.apa && d.apa.authors) || '').toLowerCase();
+        const authorFw = a.replace(/[^ก-๙a-z0-9\s]/g,' ').trim().split(/\s+/)[0] || '';
+        if (authorFw.length >= 4 && bib.includes(authorFw)) return true;
+        // Match by bib first word against apa_authors
+        return bibFirstWord.length >= 4 && a.includes(bibFirstWord);
+      });
+      if (hit && hit.open_url) c.open_url = hit.open_url;
+    });
+
+    // ── Step 4: render bibliography section ──
+    const citEntries = Object.values(_chatCiteMap).filter(c => c.bibliography_text || c.citation_text);
+    let chatCiteHtml = '';
+    if (citEntries.length) {
+      const srcIcon = {notebooklm_pdf:'📄', database:'🗄️', document:'📝'};
+      chatCiteHtml = `<div class="mt-3 pt-3 border-t border-gray-100">
+        <p class="text-xs font-semibold text-gray-500 mb-2">🔖 เอกสารอ้างอิง (${citEntries.length} รายการ)</p>
+        <div class="space-y-1">${
+          citEntries.map(c => {
+            const bib = escapeHtml(c.bibliography_text || c.citation_text || c.source_ref || '');
+            const linkIcon = c.open_url
+              ? ` <a href="${c.open_url}" target="_blank" rel="noopener"
+                  class="text-teal-500 hover:text-teal-700 ml-0.5 align-middle"
+                  title="เปิดเอกสารต้นฉบับในแท็บใหม่">🔗</a>`
+              : '';
+            return `<div class="flex gap-2 py-1 border-b border-gray-50 text-xs items-start">
+              <span class="font-mono bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded shrink-0 mt-0.5">${escapeHtml(c.citation_code||'')}</span>
+              <span class="text-gray-600 leading-relaxed">${srcIcon[c.source_type]||'📎'} ${bib}${linkIcon}</span>
+            </div>`;
+          }).join('')
+        }</div></div>`;
+    }
+
+    const metaHtml = `
+      <div class="mt-2 pt-2 border-t border-gray-100 flex flex-wrap gap-3 text-[10px] text-gray-400">
+        ${topic ? `<span>📊 ${escapeHtml(topic)}</span>` : ''}
+        ${elapsed ? `<span>⏱ ${elapsed.toFixed(1)}s</span>` : ''}
+        ${agents  ? `<span>🤖 ${agents} agents</span>` : ''}
+        ${chartCnt ? `<span>📊 ${chartCnt} chart${chartCnt>1?'s':''}</span>` : ''}
+      </div>`;
+    body = `
+      <div data-inner data-cite-map='${JSON.stringify(_chatCiteMap).replace(/'/g, "&#39;")}'
+           class="prose text-sm text-gray-700 max-h-[640px] overflow-y-auto">
+        ${marked.parse(content)}
+      </div>
+      ${chatCiteHtml}
+      ${metaHtml}`;
+  }
+
+  return `
+    <div class="flex gap-2">
+      <div class="w-7 h-7 bg-gradient-to-br from-teal-500 to-emerald-600 rounded-full flex items-center justify-center text-white text-xs font-bold shrink-0 mt-0.5">M</div>
+      <div class="flex-1 bg-white border border-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+        <div class="flex items-center gap-2 mb-2">${pipeLabel}${confBadge}</div>
+        ${reasonNote}
+        ${body}
+      </div>
+    </div>`;
+}
+
+// Registry: bubbleId → full policy_brief text (for copy)
+const _bubbleReports = {};
+
+function bubbleTab(bubbleId, key) {
+  document.querySelectorAll(`[id^="${bubbleId}-sec-"]`).forEach(el => el.classList.add('hidden'));
+  document.querySelectorAll(`[id^="${bubbleId}-tab-"]`).forEach(btn => {
+    btn.classList.remove('text-teal-700','border-b-2','border-teal-500');
+    btn.classList.add('text-gray-500');
+  });
+  const sec = document.getElementById(`${bubbleId}-sec-${key}`);
+  if (sec) sec.classList.remove('hidden');
+  const tab = document.getElementById(`${bubbleId}-tab-${key}`);
+  if (tab) {
+    tab.classList.remove('text-gray-500');
+    tab.classList.add('text-teal-700','border-b-2','border-teal-500');
+  }
+}
+
+function copyBubbleReport(bubbleId) {
+  const text = _bubbleReports[bubbleId] || '';
+  if (!text) return;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = document.querySelector(`button[onclick="copyBubbleReport('${bubbleId}')"]`);
+    if (btn) { const orig = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(()=>btn.textContent=orig,1200); }
+  });
+}
+
+// ── Reference Library ────────────────────────────────────────────────────
+let _refDocs = [];
+
+async function loadRefLibrary() {
+  const tbody = document.getElementById('refs-table-body');
+  tbody.innerHTML = '<tr><td colspan="6" class="py-8 text-center text-gray-400"><span class="spin inline-block">⟳</span> กำลังโหลด...</td></tr>';
+  document.getElementById('refs-total').textContent = '—';
+  document.getElementById('refs-apa-count').textContent = '—';
+  document.getElementById('refs-pdf-count').textContent = '—';
+
+  try {
+    const res = await fetch(BASE + '/api/documents/registry');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    _refDocs = data.documents || [];
+    renderRefTable(_refDocs);
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-red-400">โหลดไม่ได้: ${err.message}</td></tr>`;
+  }
+}
+
+function filterRefTable() {
+  const q = (document.getElementById('refs-search').value || '').toLowerCase();
+  const t = document.getElementById('refs-topic').value;
+  const filtered = _refDocs.filter(d => {
+    const matchTopic = !t || d.topic === t;
+    const matchSearch = !q ||
+      (d.title || '').toLowerCase().includes(q) ||
+      (d.file_path || '').toLowerCase().includes(q) ||
+      (d.apa_citation || '').toLowerCase().includes(q);
+    return matchTopic && matchSearch;
+  });
+  renderRefTable(filtered);
+}
+
+const _TOPIC_COLORS = {
+  accident:     'bg-red-50 text-red-700',
+  mental_health:'bg-amber-50 text-amber-700',
+  nutrition:    'bg-emerald-50 text-emerald-700',
+  general:      'bg-gray-100 text-gray-600',
+};
+const _TOPIC_LABELS = {
+  accident:     '🚗 RTI',
+  mental_health:'🧠 MH',
+  nutrition:    '🍎 NCD',
+  general:      '📄 ทั่วไป',
+};
+
+function renderRefTable(docs) {
+  const tbody = document.getElementById('refs-table-body');
+  const empty = document.getElementById('refs-empty');
+
+  const apaCount = docs.filter(d => d.apa_citation && d.apa_citation.length > 5).length;
+  const pdfCount = docs.filter(d => d.open_url).length;
+  document.getElementById('refs-total').textContent = docs.length;
+  document.getElementById('refs-apa-count').textContent = apaCount;
+  document.getElementById('refs-pdf-count').textContent = pdfCount;
+
+  if (!docs.length) {
+    tbody.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+
+  const topicGroup = {};
+  docs.forEach(d => {
+    const t = d.topic || 'general';
+    if (!topicGroup[t]) topicGroup[t] = [];
+    topicGroup[t].push(d);
+  });
+
+  let html = '';
+  let idx = 1;
+  Object.entries(topicGroup).forEach(([topic, group]) => {
+    const topicLabel = _TOPIC_LABELS[topic] || topic;
+    html += `<tr class="bg-gray-50"><td colspan="6" class="py-1.5 px-3 font-semibold text-xs text-gray-500 uppercase tracking-wide">${topicLabel}</td></tr>`;
+    group.forEach(d => {
+      const tc = _TOPIC_COLORS[d.topic] || _TOPIC_COLORS.general;
+      const apa = escapeHtml(d.apa_citation || d.title || d.file_path || '—');
+      const year = escapeHtml(d.apa?.year || '');
+      const chunks = d.chunk_count > 0
+        ? `<span class="text-green-600">${d.chunk_count} chunk</span>`
+        : `<span class="text-gray-300">—</span>`;
+      const ext = (d.file_path || '').split('.').pop().toLowerCase();
+      const fileIcon = ext === 'pdf' ? '📄' : ext === 'txt' ? '📝' : ext === 'docx' ? '📋' : '📁';
+      const openBtn = d.open_url
+        ? `<a href="${d.open_url}" target="_blank" rel="noopener"
+              class="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-600 hover:text-teal-800 transition-all"
+              title="เปิด ${escapeHtml(d.title || d.file_path || '')} ในแท็บใหม่">${fileIcon}</a>`
+        : `<span class="text-gray-200 text-lg">—</span>`;
+      html += `
+        <tr class="border-b border-gray-50 hover:bg-teal-50 transition-colors">
+          <td class="py-2 px-3 text-gray-300 font-mono">${idx++}</td>
+          <td class="py-2 px-3">
+            <p class="text-gray-700 leading-relaxed">${apa}</p>
+            <p class="text-gray-400 mt-0.5 font-mono">${escapeHtml(d.file_path || '')}</p>
+          </td>
+          <td class="py-2 px-3"><span class="${tc} text-xs px-1.5 py-0.5 rounded">${_TOPIC_LABELS[d.topic] || d.topic}</span></td>
+          <td class="py-2 px-3 text-gray-500">${year}</td>
+          <td class="py-2 px-3">${chunks}</td>
+          <td class="py-2 px-3 text-center">${openBtn}</td>
+        </tr>`;
+    });
+  });
+  tbody.innerHTML = html;
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  checkHealth();
+  setInterval(checkHealth, 30000);
+  loadSourcesTable();
+  loadDBStats();
+  loadRefLibrary();
+  marked.setOptions({ breaks: true, gfm: true });
+  switchTab('chat');
+});
+</script>
+</body>
+</html>

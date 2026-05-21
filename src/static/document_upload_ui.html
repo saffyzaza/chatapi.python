@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Musya Agent — Document & Citation Manager</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #f0f2f5; color: #333; }
+  .header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff; padding: 18px 30px; font-size: 1.3em; font-weight: 700;
+  }
+  .tabs {
+    display: flex; background: #fff; border-bottom: 2px solid #e0e0e0;
+    padding: 0 20px; gap: 0;
+  }
+  .tab-btn {
+    padding: 14px 22px; cursor: pointer; border: none; background: none;
+    font-size: .95em; font-weight: 600; color: #666; position: relative;
+    transition: color .2s;
+  }
+  .tab-btn:hover { color: #667eea; }
+  .tab-btn.active { color: #667eea; }
+  .tab-btn.active::after {
+    content: ''; position: absolute; bottom: -2px; left: 0; right: 0;
+    height: 3px; background: #667eea; border-radius: 3px 3px 0 0;
+  }
+  .tab-panel { display: none; padding: 24px; max-width: 1100px; margin: 0 auto; }
+  .tab-panel.active { display: block; }
+  .card {
+    background: #fff; border-radius: 10px; padding: 24px; margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.06);
+  }
+  .card h3 { margin-bottom: 16px; color: #444; font-size: 1.1em; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; color: #555; font-size: .9em; }
+  input[type=text], input[type=number], select, textarea {
+    width: 100%; padding: 10px 12px; border: 1.5px solid #ddd; border-radius: 6px;
+    font-size: .95em; margin-bottom: 14px; transition: border-color .2s;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #667eea; }
+  textarea { min-height: 60px; resize: vertical; }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 140px; }
+  .btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff; border: none; padding: 11px 28px; border-radius: 6px;
+    font-size: .95em; font-weight: 600; cursor: pointer; transition: transform .15s, opacity .2s;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+  .btn-sm { padding: 6px 14px; font-size: .85em; }
+  .btn-danger { background: linear-gradient(135deg, #e53935 0%, #b71c1c 100%); }
+  .btn-outline {
+    background: #fff; color: #667eea; border: 1.5px solid #667eea;
+  }
+  .btn-outline:hover { background: #f0f0ff; }
+  .drop-zone {
+    border: 2.5px dashed #bbb; border-radius: 10px; padding: 40px; text-align: center;
+    color: #888; cursor: pointer; transition: border-color .3s, background .3s;
+    margin-bottom: 16px;
+  }
+  .drop-zone:hover, .drop-zone.dragover { border-color: #667eea; background: #f4f0ff; }
+  .drop-zone input[type=file] { display: none; }
+  .drop-zone .icon { font-size: 2.5em; margin-bottom: 8px; }
+  .progress-bar { height: 8px; background: #eee; border-radius: 4px; margin-top: 10px; overflow: hidden; }
+  .progress-bar .fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); transition: width .4s; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: .8em; font-weight: 600;
+  }
+  .badge-green { background: #e8f5e9; color: #2e7d32; }
+  .badge-red { background: #ffebee; color: #c62828; }
+  .badge-yellow { background: #fff8e1; color: #f57f17; }
+  .badge-blue { background: #e3f2fd; color: #1565c0; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; padding: 10px 12px; background: #f5f5f5; font-size: .85em; color: #666; border-bottom: 2px solid #e0e0e0; }
+  td { padding: 10px 12px; border-bottom: 1px solid #eee; font-size: .9em; vertical-align: top; }
+  tr:hover td { background: #fafafa; }
+  .apa-ref {
+    font-family: 'Times New Roman', serif; font-size: .95em; line-height: 1.6;
+    padding: 12px 16px; background: #fafafa; border-left: 3px solid #667eea;
+    border-radius: 0 6px 6px 0; margin-bottom: 12px;
+  }
+  .apa-ref em { font-style: italic; }
+  .trust-high { color: #2e7d32; } .trust-med { color: #f57f17; } .trust-low { color: #c62828; }
+  .source-link { display: inline-flex; align-items: center; gap: 4px; color: #667eea; text-decoration: none; font-size: .88em; }
+  .source-link:hover { text-decoration: underline; }
+  .divider { border: none; border-top: 1px solid #eee; margin: 18px 0; }
+  .chat-box {
+    background: #2d2d2d; color: #f8f8f2; padding: 16px; border-radius: 8px;
+    font-family: 'Consolas', monospace; font-size: .88em; max-height: 500px;
+    overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+  }
+  .pagination { display: flex; gap: 6px; align-items: center; margin-top: 14px; justify-content: center; }
+  .pagination button { min-width: 34px; }
+  .empty-state { text-align: center; padding: 40px 20px; color: #999; }
+  .empty-state .icon { font-size: 3em; margin-bottom: 10px; }
+  .coverage-bar { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+  .coverage-bar .bar { flex: 1; height: 10px; background: #eee; border-radius: 5px; overflow: hidden; }
+  .coverage-bar .bar .fill { height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 5px; }
+  .spinner { display: inline-block; width: 18px; height: 18px; border: 2.5px solid #ccc; border-top-color: #667eea; border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 700px) { .row { flex-direction: column; } .tabs { overflow-x: auto; } }
+</style>
+</head>
+<body>
+
+<div class="header">Musya Agent — Document & Citation Manager</div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('upload')">📤 Upload</button>
+  <button class="tab-btn" onclick="switchTab('sync')">📦 MinIO Sync</button>
+  <button class="tab-btn" onclick="switchTab('library')">📚 Library</button>
+  <button class="tab-btn" onclick="switchTab('citations')">📝 Citations</button>
+  <button class="tab-btn" onclick="switchTab('chat')">💬 Chat Test</button>
+</div>
+
+<!-- ==================== UPLOAD TAB ==================== -->
+<div id="tab-upload" class="tab-panel active">
+  <div class="card">
+    <h3>📤 Upload Document</h3>
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+      <div class="icon">📁</div>
+      <div>Drop file here or <strong>click to browse</strong></div>
+      <div style="font-size:.85em;color:#aaa;margin-top:6px">PDF, DOCX, TXT, MD — Max 50 MB</div>
+      <input type="file" id="fileInput" accept=".pdf,.docx,.txt,.md">
+    </div>
+    <div id="fileInfo" style="display:none;margin-bottom:14px;padding:10px;background:#f0f0ff;border-radius:6px;font-size:.9em;"></div>
+
+    <hr class="divider">
+    <div style="margin-bottom:8px;font-weight:600;color:#555;">— OR import from URL —</div>
+    <div class="row">
+      <div style="flex:3"><input type="text" id="extUrl" placeholder="https://example.go.th/report-2025.pdf"></div>
+      <div style="flex:0"><button class="btn btn-outline" onclick="fetchUrl()">Fetch</button></div>
+    </div>
+
+    <hr class="divider">
+    <h3>📋 Document Metadata</h3>
+    <div class="row">
+      <div style="flex:2"><label>Title</label><input type="text" id="upTitle" placeholder="Auto-detected from filename"></div>
+      <div><label>Topic</label>
+        <select id="upTopic">
+          <option value="" disabled selected>— Select topic —</option>
+          <option value="accident">accident</option>
+          <option value="mental_health">mental_health</option>
+          <option value="nutrition">nutrition</option>
+          <option value="general">general</option>
+        </select>
+      </div>
+      <div><label>Doc Type (APA)</label>
+        <select id="upApaType">
+          <option value="report">Report</option>
+          <option value="book">Book</option>
+          <option value="article">Article</option>
+          <option value="website">Website</option>
+          <option value="dataset">Dataset</option>
+          <option value="law">Law</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+      <h3 style="margin:0;">📖 APA Metadata</h3>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <button class="btn btn-outline" id="analyzeBtn" onclick="analyzeWithAI()" style="padding:7px 16px;font-size:.88em;" disabled>🤖 Analyze with AI</button>
+        <span id="analyzeStatus" style="font-size:.82em;color:#666;"></span>
+        <span id="analyzeBadge" style="display:none;"></span>
+      </div>
+    </div>
+    <div id="analyzeReason" style="display:none;font-size:.8em;color:#888;background:#f9f9ff;border-left:3px solid #c5cae9;padding:6px 10px;border-radius:0 4px 4px 0;margin-bottom:10px;"></div>
+    <div class="row">
+      <div style="flex:2"><label>Authors</label><input type="text" id="upAuthors" placeholder="e.g. กรมทางหลวง"></div>
+      <div><label>Year</label><input type="text" id="upYear" placeholder="2025"></div>
+    </div>
+    <div class="row">
+      <div style="flex:2"><label>Publisher</label><input type="text" id="upPublisher" placeholder="e.g. กระทรวงคมนาคม"></div>
+      <div><label>DOI</label><input type="text" id="upDoi" placeholder="10.xxxx/xxxx"></div>
+    </div>
+    <div class="row">
+      <div><label>Edition</label><input type="text" id="upEdition" placeholder="พิมพ์ครั้งที่ 2"></div>
+      <div><label>Volume</label><input type="text" id="upVolume" placeholder="12(3)"></div>
+      <div><label>Pages</label><input type="text" id="upPages" placeholder="45-60"></div>
+    </div>
+
+    <div class="apa-ref" id="apaPreview" style="margin-top:10px;">
+      <em>APA preview will appear here...</em>
+    </div>
+
+    <div style="margin-top:16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+      <button class="btn" id="uploadBtn" onclick="doUpload()">📤 Upload & Ingest</button>
+      <span id="uploadStatus" style="font-size:.9em;color:#666;"></span>
+    </div>
+    <div class="progress-bar" id="uploadProgress" style="display:none;"><div class="fill" id="uploadFill" style="width:0%"></div></div>
+  </div>
+
+  <div class="card" id="uploadResult" style="display:none;">
+    <h3>✅ Upload Result</h3>
+    <div class="chat-box" id="uploadResultJson"></div>
+  </div>
+</div>
+
+<!-- ==================== MINIO SYNC TAB ==================== -->
+<div id="tab-sync" class="tab-panel" style="padding:0;">
+
+  <!-- Toolbar -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 20px;background:#f8f9fa;border-bottom:1px solid #e0e0e0;gap:10px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="font-weight:700;font-size:1em;color:#333;">📦 MinIO — uploads</span>
+      <span id="syncFileCount" style="font-size:.78em;background:#e8eaf6;color:#3949ab;padding:2px 10px;border-radius:10px;"></span>
+      <span id="syncSummary" style="font-size:.78em;color:#888;"></span>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <div id="syncStatus" style="font-size:.85em;"></div>
+      <button class="btn" style="padding:8px 16px;font-size:.88em;background:#f0f0f0;color:#333;border:1.5px solid #ccc;" onclick="syncTree()">🔄 Sync</button>
+      <button class="btn" style="padding:8px 16px;font-size:.88em;background:#e8f5e9;color:#2e7d32;border:1.5px solid #a5d6a7;" onclick="batchIngestAll()">⬆ Ingest All Approved</button>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div style="padding:6px 20px;background:#fff;border-bottom:1px solid #eee;font-size:.78em;color:#666;display:flex;gap:16px;flex-wrap:wrap;">
+    <span>🟢 Registered + Embedded</span>
+    <span>🔵 Registered, not embedded</span>
+    <span>🟡 Processing</span>
+    <span>🔴 Failed</span>
+    <span>⚪ Not registered</span>
+    <span>✏️ Draft (awaiting approval)</span>
+  </div>
+
+  <!-- Split pane -->
+  <div style="display:flex;height:calc(100vh - 220px);min-height:500px;">
+
+    <!-- LEFT: Tree -->
+    <div id="syncTreePanel" style="width:290px;min-width:180px;border-right:1px solid #e0e0e0;overflow-y:auto;background:#fafafa;flex-shrink:0;">
+      <div id="syncTreeRoot" style="padding:6px 0;font-size:.87em;">
+        <div style="padding:30px;text-align:center;color:#bbb;"><span class="spinner"></span></div>
+      </div>
+    </div>
+
+    <!-- Resize handle -->
+    <div id="syncResizer" style="width:5px;cursor:col-resize;background:#e8e8e8;flex-shrink:0;" onmouseenter="this.style.background='#667eea'" onmouseleave="this.style.background='#e8e8e8'"></div>
+
+    <!-- RIGHT: Viewer + APA panel -->
+    <div id="syncViewer" style="flex:1;overflow:hidden;display:flex;flex-direction:column;background:#fff;">
+
+      <!-- Viewer header -->
+      <div style="padding:10px 18px;border-bottom:1px solid #eee;background:#f9f9f9;display:flex;align-items:center;justify-content:space-between;min-height:46px;">
+        <span id="syncViewerPath" style="font-size:.82em;color:#888;font-family:monospace;">← Select a file from the tree</span>
+        <div id="syncViewerActions" style="display:flex;gap:6px;"></div>
+      </div>
+
+      <!-- Scrollable body -->
+      <div id="syncViewerBody" style="flex:1;overflow-y:auto;">
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:#ccc;">
+          <div style="font-size:3em;">📂</div>
+          <div style="margin-top:10px;">Click a file to inspect it</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== LIBRARY TAB ==================== -->
+<div id="tab-library" class="tab-panel">
+  <div class="card">
+    <h3>📚 Document Library</h3>
+    <div class="row" style="margin-bottom:14px;">
+      <div><label>Status</label>
+        <select id="libStatus" onchange="loadLibrary()">
+          <option value="">All</option>
+          <option value="completed">Completed</option>
+          <option value="failed">Failed</option>
+          <option value="processing">Processing</option>
+          <option value="pending">Pending</option>
+        </select>
+      </div>
+      <div><label>Topic</label>
+        <select id="libTopic" onchange="loadLibrary()">
+          <option value="">All</option>
+          <option value="accident">accident</option>
+          <option value="mental_health">mental_health</option>
+          <option value="nutrition">nutrition</option>
+          <option value="general">general</option>
+        </select>
+      </div>
+      <div><label>Source</label>
+        <select id="libSource" onchange="loadLibrary()">
+          <option value="">All</option>
+          <option value="internal">Internal (MinIO)</option>
+          <option value="external">External (URL)</option>
+        </select>
+      </div>
+      <div style="flex:2"><label>Search</label><input type="text" id="libSearch" placeholder="Title / filename..." oninput="debounceSearch()"></div>
+    </div>
+    <div id="libTableWrap">
+      <div class="empty-state"><div class="icon">📂</div>Click a tab filter or load to see documents</div>
+    </div>
+    <div class="pagination" id="libPagination"></div>
+  </div>
+</div>
+
+<!-- ==================== CITATIONS TAB ==================== -->
+<div id="tab-citations" class="tab-panel">
+  <div class="card">
+    <h3>📝 APA Citations</h3>
+    <div class="row" style="margin-bottom:14px;">
+      <div style="flex:3"><label>Session ID</label><input type="text" id="citSession" placeholder="Enter session_id from chat response"></div>
+      <div style="flex:0;align-self:flex-end;"><button class="btn" onclick="loadCitations()">Load Citations</button></div>
+    </div>
+    <div id="citResult">
+      <div class="empty-state"><div class="icon">📝</div>Enter a session ID and click Load</div>
+    </div>
+  </div>
+  <div class="card" id="citDocCard" style="display:none;">
+    <h3>📄 Single Document Citation</h3>
+    <div class="row" style="margin-bottom:14px;">
+      <div style="flex:2"><label>Document ID</label><input type="number" id="citDocId" placeholder="e.g. 42"></div>
+      <div style="flex:0;align-self:flex-end;"><button class="btn btn-outline" onclick="loadDocCitation()">Get APA</button></div>
+    </div>
+    <div id="citDocResult"></div>
+  </div>
+</div>
+
+<!-- ==================== CHAT TEST TAB ==================== -->
+<div id="tab-chat" class="tab-panel">
+  <div class="card">
+    <h3>💬 Chat Test (Agent Pipeline)</h3>
+    <label>Message</label>
+    <textarea id="chatMsg" placeholder="สถิติอุบัติเหตุจังหวัดเชียงใหม่ปี 2025" style="min-height:70px;"></textarea>
+    <div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+      <button class="btn" id="chatBtn" onclick="doChat()">🚀 Send to Agent Pipeline</button>
+      <span id="chatStatus" style="font-size:.9em;color:#666;"></span>
+    </div>
+  </div>
+  <div class="card" id="chatResult" style="display:none;">
+    <h3>Agent Response</h3>
+    <div class="chat-box" id="chatResultJson"></div>
+  </div>
+</div>
+
+<script>
+const API = '';
+
+/* ---- Tab switching ---- */
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  document.querySelector(`.tab-btn[onclick*="${name}"]`).classList.add('active');
+  if (name === 'library') loadLibrary();
+  if (name === 'sync') syncTree();
+}
+
+/* ---- Drag & drop ---- */
+const dz = document.getElementById('dropZone');
+const fi = document.getElementById('fileInput');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('dragover');
+  if (e.dataTransfer.files.length) { fi.files = e.dataTransfer.files; showFileInfo(); }
+});
+fi.addEventListener('change', showFileInfo);
+
+function showFileInfo() {
+  const f = fi.files[0];
+  if (!f) return;
+  const info = document.getElementById('fileInfo');
+  info.style.display = 'block';
+  info.innerHTML = `<strong>${f.name}</strong> — ${(f.size/1024).toFixed(1)} KB — ${f.type || 'unknown'}`;
+  if (!document.getElementById('upTitle').value) {
+    document.getElementById('upTitle').value = f.name.replace(/\.[^.]+$/, '').replace(/[_-]/g, ' ');
+  }
+  // Enable AI analyze button
+  document.getElementById('analyzeBtn').disabled = false;
+  document.getElementById('analyzeStatus').textContent = '';
+  document.getElementById('analyzeBadge').style.display = 'none';
+  document.getElementById('analyzeReason').style.display = 'none';
+  updateApaPreview();
+}
+
+/* ---- AI Analyze Upload ---- */
+async function analyzeWithAI() {
+  const f = fi.files[0];
+  if (!f) return alert('Select a file first');
+  const btn = document.getElementById('analyzeBtn');
+  const statusEl = document.getElementById('analyzeStatus');
+  const badgeEl = document.getElementById('analyzeBadge');
+  const reasonEl = document.getElementById('analyzeReason');
+
+  btn.disabled = true;
+  statusEl.innerHTML = '<span class="spinner"></span> Analyzing…';
+  badgeEl.style.display = 'none';
+  reasonEl.style.display = 'none';
+
+  try {
+    const fd = new FormData();
+    fd.append('file', f);
+    const r = await fetch(API + '/api/documents/analyze-upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+
+    // Auto-fill all APA fields
+    const set = (id, val) => { if (val) document.getElementById(id).value = val; };
+    set('upTitle',     j.title);
+    set('upAuthors',   j.apa_authors);
+    set('upYear',      j.apa_year);
+    set('upPublisher', j.apa_publisher);
+    set('upDoi',       j.apa_doi);
+    set('upEdition',   j.apa_edition);
+    set('upVolume',    j.apa_volume);
+    set('upPages',     j.apa_pages);
+    if (j.apa_type) document.getElementById('upApaType').value = j.apa_type;
+
+    // Set topic dropdown if matched
+    const topicSel = document.getElementById('upTopic');
+    const topicOptions = Array.from(topicSel.options).map(o => o.value);
+    if (j.topic && topicOptions.includes(j.topic)) topicSel.value = j.topic;
+
+    // Show confidence badge
+    const confColor = j.confidence === 'high' ? '#2e7d32' : j.confidence === 'medium' ? '#f57f17' : '#c62828';
+    const confBg    = j.confidence === 'high' ? '#e8f5e9' : j.confidence === 'medium' ? '#fff8e1' : '#ffebee';
+    const confLabel = j.confidence === 'high' ? '🟢 HIGH' : j.confidence === 'medium' ? '🟡 MEDIUM' : '🔴 LOW';
+    badgeEl.style.cssText = `display:inline-block;padding:3px 10px;border-radius:12px;font-size:.8em;font-weight:600;background:${confBg};color:${confColor};`;
+    badgeEl.textContent = 'AI Confidence: ' + confLabel;
+    badgeEl.style.display = 'inline-block';
+
+    if (j.reason) {
+      reasonEl.textContent = '💡 ' + j.reason;
+      reasonEl.style.display = 'block';
+    }
+
+    statusEl.textContent = '✅ Fields filled';
+    updateApaPreview();
+  } catch (e) {
+    statusEl.innerHTML = '<span style="color:#c62828">❌ ' + esc(e.message) + '</span>';
+  }
+  btn.disabled = false;
+}
+
+/* ---- APA live preview ---- */
+['upTitle','upAuthors','upYear','upPublisher','upDoi','upApaType','upEdition','upVolume','upPages'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateApaPreview);
+  if (document.getElementById(id).tagName === 'SELECT')
+    document.getElementById(id).addEventListener('change', updateApaPreview);
+});
+
+function updateApaPreview() {
+  const t = v('upApaType'), authors = v('upAuthors') || v('upTitle') || 'ไม่ระบุ',
+        year = v('upYear') || 'n.d.', title = v('upTitle') || 'ไม่ระบุชื่อ',
+        pub = v('upPublisher'), doi = v('upDoi'), ed = v('upEdition'),
+        vol = v('upVolume'), pages = v('upPages');
+  let ref = '';
+  const it = s => `<em>${s}</em>`;
+  if (t === 'report') { ref = `${authors}. (${year}). ${it(title)}.`; if (pub) ref += ` ${pub}.`; }
+  else if (t === 'book') { ref = `${authors}. (${year}). ${it(title)}${ed ? ' ('+ed+')' : ''}.`; if (pub) ref += ` ${pub}.`; }
+  else if (t === 'article') { ref = `${authors}. (${year}). ${title}.`; if (pub) ref += ` ${it(pub)}`; if (vol) ref += `, ${vol}`; if (pages) ref += `, ${pages}`; ref += '.'; if (doi) ref += ` https://doi.org/${doi}`; }
+  else if (t === 'website') { ref = `${authors}. (${year}). ${it(title)}.`; if (pub) ref += ` ${pub}.`; }
+  else if (t === 'dataset') { ref = `${authors}. (${year}). ${it(title)} [Data set].`; if (pub) ref += ` ${pub}.`; }
+  else if (t === 'law') { ref = `${title}, ${authors} (${year}).`; if (vol) ref += ` ราชกิจจานุเบกษา เล่ม ${vol}.`; }
+  else { ref = `${authors}. (${year}). ${it(title)}.`; }
+  document.getElementById('apaPreview').innerHTML = ref;
+}
+
+/* ---- Upload ---- */
+async function doUpload() {
+  const file = fi.files[0];
+  if (!file) return alert('Please select a file first');
+  if (!v('upTopic')) return alert('Please select a Topic (accident / mental_health / nutrition / general)');
+  const btn = document.getElementById('uploadBtn');
+  btn.disabled = true;
+  setStatus('uploadStatus', '<span class="spinner"></span> Uploading & ingesting...');
+  showProgress(true, 30);
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('title', v('upTitle'));
+  fd.append('topic', v('upTopic'));
+  fd.append('apa_authors', v('upAuthors'));
+  fd.append('apa_year', v('upYear'));
+  fd.append('apa_publisher', v('upPublisher'));
+  fd.append('apa_doi', v('upDoi'));
+  fd.append('apa_type', v('upApaType'));
+  fd.append('external_url', v('extUrl'));
+
+  showProgress(true, 60);
+  try {
+    const r = await fetch(API + '/api/documents/upload', { method: 'POST', body: fd });
+    const j = await r.json();
+    showProgress(true, 100);
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    setStatus('uploadStatus', '✅ Done!');
+    document.getElementById('uploadResult').style.display = 'block';
+    document.getElementById('uploadResultJson').textContent = JSON.stringify(j, null, 2);
+  } catch (e) {
+    setStatus('uploadStatus', '❌ ' + e.message);
+  }
+  btn.disabled = false;
+  setTimeout(() => showProgress(false), 1500);
+}
+
+/* ---- URL fetch ---- */
+async function fetchUrl() {
+  const url = v('extUrl');
+  if (!url) return alert('Please enter a URL');
+  setStatus('uploadStatus', '<span class="spinner"></span> Downloading from URL...');
+  showProgress(true, 40);
+
+  const fd = new FormData();
+  fd.append('url', url);
+  fd.append('title', v('upTitle'));
+  fd.append('topic', v('upTopic'));
+  fd.append('apa_authors', v('upAuthors'));
+  fd.append('apa_year', v('upYear'));
+  fd.append('apa_publisher', v('upPublisher'));
+  fd.append('apa_doi', v('upDoi'));
+  fd.append('apa_type', v('upApaType'));
+
+  showProgress(true, 70);
+  try {
+    const r = await fetch(API + '/api/documents/upload-url', { method: 'POST', body: fd });
+    const j = await r.json();
+    showProgress(true, 100);
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    setStatus('uploadStatus', '✅ Fetched & ingested!');
+    document.getElementById('uploadResult').style.display = 'block';
+    document.getElementById('uploadResultJson').textContent = JSON.stringify(j, null, 2);
+  } catch (e) {
+    setStatus('uploadStatus', '❌ ' + e.message);
+  }
+  setTimeout(() => showProgress(false), 1500);
+}
+
+/* ---- Library ---- */
+let libPage = 1;
+let searchTimer = null;
+function debounceSearch() { clearTimeout(searchTimer); searchTimer = setTimeout(() => { libPage = 1; loadLibrary(); }, 400); }
+
+async function loadLibrary(page) {
+  if (page) libPage = page;
+  const wrap = document.getElementById('libTableWrap');
+  wrap.innerHTML = '<div style="padding:20px;color:#999"><span class="spinner"></span> Loading...</div>';
+  const params = new URLSearchParams({
+    page: libPage, per_page: 15,
+    status: v('libStatus'), topic: v('libTopic'),
+    source_type: v('libSource'), search: v('libSearch'),
+  });
+  try {
+    const r = await fetch(API + '/api/documents?' + params);
+    const j = await r.json();
+    if (!j.documents || !j.documents.length) {
+      wrap.innerHTML = '<div class="empty-state"><div class="icon">📂</div>No documents found</div>';
+      document.getElementById('libPagination').innerHTML = '';
+      return;
+    }
+    let html = '<table><tr><th>ID</th><th>Title</th><th>Type</th><th>Chunks</th><th>Status</th><th>Source</th><th>Actions</th></tr>';
+    for (const d of j.documents) {
+      const st = d.ingestion_status;
+      const badge = st === 'completed' ? 'badge-green' : st === 'failed' ? 'badge-red' : st === 'processing' ? 'badge-yellow' : 'badge-blue';
+      const srcBadge = d.source_type === 'external'
+        ? `📄 <a href="${d.minio_url}" target="_blank">MinIO</a> | 🔗 <a href="${d.external_url}" target="_blank">URL</a>`
+        : `📄 <a href="${d.minio_url}" target="_blank">MinIO</a>`;
+      html += `<tr>
+        <td>${d.document_id}</td>
+        <td><strong>${esc(d.title)}</strong><br><span style="font-size:.8em;color:#999">${esc(d.apa_citation || '')}</span></td>
+        <td>${(d.document_type||'').toUpperCase()}</td>
+        <td>${d.chunk_count}</td>
+        <td><span class="badge ${badge}">${st}</span></td>
+        <td style="font-size:.85em">${srcBadge}</td>
+        <td>
+          ${st === 'failed' ? `<button class="btn btn-sm btn-outline" onclick="reingest(${d.document_id})">🔄 Retry</button> ` : ''}
+          <button class="btn btn-sm btn-danger" onclick="deleteDoc(${d.document_id})">🗑</button>
+        </td>
+      </tr>`;
+    }
+    html += '</table>';
+    wrap.innerHTML = html;
+
+    // Pagination
+    const totalPages = Math.ceil(j.total / j.per_page);
+    let pag = '';
+    if (totalPages > 1) {
+      pag += `<button class="btn btn-sm btn-outline" ${libPage <= 1 ? 'disabled' : ''} onclick="loadLibrary(${libPage-1})">&lt;</button>`;
+      for (let i = 1; i <= Math.min(totalPages, 7); i++)
+        pag += `<button class="btn btn-sm ${i === libPage ? '' : 'btn-outline'}" onclick="loadLibrary(${i})">${i}</button>`;
+      if (totalPages > 7) pag += `<span>... ${totalPages}</span>`;
+      pag += `<button class="btn btn-sm btn-outline" ${libPage >= totalPages ? 'disabled' : ''} onclick="loadLibrary(${libPage+1})">&gt;</button>`;
+    }
+    pag += `<span style="font-size:.85em;color:#999;margin-left:8px">Showing ${(libPage-1)*j.per_page+1}-${Math.min(libPage*j.per_page,j.total)} of ${j.total}</span>`;
+    document.getElementById('libPagination').innerHTML = pag;
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty-state" style="color:#c62828">❌ ${e.message}</div>`;
+  }
+}
+
+async function deleteDoc(id) {
+  if (!confirm('Delete document #' + id + '? This removes the file, embeddings, and registry entry.')) return;
+  try {
+    const r = await fetch(API + '/api/documents/' + id, { method: 'DELETE' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    alert(`Deleted: ${j.chunks_removed} chunks removed`);
+    loadLibrary();
+  } catch (e) { alert('Delete failed: ' + e.message); }
+}
+
+async function reingest(id) {
+  try {
+    const r = await fetch(API + '/api/documents/' + id + '/reingest', { method: 'POST' });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    alert(`Re-ingested: ${j.chunks_ingested} chunks`);
+    loadLibrary();
+  } catch (e) { alert('Reingest failed: ' + e.message); }
+}
+
+/* ---- Citations ---- */
+async function loadCitations() {
+  const sid = v('citSession');
+  if (!sid) return alert('Enter a session ID');
+  const el = document.getElementById('citResult');
+  el.innerHTML = '<div style="padding:20px;color:#999"><span class="spinner"></span> Loading...</div>';
+  try {
+    const r = await fetch(API + '/api/citations/session/' + encodeURIComponent(sid));
+    const j = await r.json();
+    if (!j.citations || !j.citations.length) {
+      el.innerHTML = '<div class="empty-state"><div class="icon">📝</div>No citations found for this session</div>';
+      return;
+    }
+    let html = '<h4 style="margin-bottom:12px;">Reference List (APA 7th Edition)</h4>';
+    for (const c of j.citations) {
+      const trustCls = c.trust_level === 'high' ? 'trust-high' : c.trust_level === 'medium' ? 'trust-med' : 'trust-low';
+      const trustIcon = c.trust_level === 'high' ? '🟢' : c.trust_level === 'medium' ? '🟡' : '🔴';
+      const typeIcon = c.evidence_type === 'document' ? '📄' : c.evidence_type === 'database' ? '🗄️' : '🔗';
+      html += `<div class="apa-ref">
+        <div style="margin-bottom:6px;">
+          <strong>[${esc(c.citation_code)}]</strong>
+          <span class="${trustCls}">${trustIcon} ${c.trust_level} trust</span>
+          <span class="badge badge-blue" style="margin-left:6px;">${typeIcon} ${c.evidence_type}</span>
+        </div>
+        <div>${formatApa(c.reference_text)}</div>
+        ${c.source_link && c.source_link.url ? `<a class="source-link" href="${c.source_link.url}" target="_blank">${typeIcon} ${esc(c.source_link.label || 'Open source')}</a>` : ''}
+      </div>`;
+    }
+
+    // Coverage from evidence/session endpoint
+    try {
+      const cr = await fetch(API + '/api/evidence/session/' + encodeURIComponent(sid) + '/coverage');
+      const cj = await cr.json();
+      const pct = (cj.coverage_score * 100).toFixed(1);
+      html += `<hr class="divider"><h4>Coverage Report</h4>
+        <div style="font-size:.9em;margin-top:8px;">
+          Total Claims: <strong>${cj.total_claims}</strong> | Supported: <strong>${cj.supported}</strong> | Partial: <strong>${cj.partially_supported}</strong> | Unsupported: <strong>${cj.insufficient}</strong>
+        </div>
+        <div class="coverage-bar"><span>${pct}%</span><div class="bar"><div class="fill" style="width:${pct}%"></div></div></div>`;
+    } catch (_) {}
+
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = `<div class="empty-state" style="color:#c62828">❌ ${e.message}</div>`;
+  }
+}
+
+async function loadDocCitation() {
+  const did = document.getElementById('citDocId').value;
+  if (!did) return alert('Enter a document ID');
+  const el = document.getElementById('citDocResult');
+  try {
+    const r = await fetch(API + '/api/citations/document/' + did);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    el.innerHTML = `
+      <div class="apa-ref"><strong>Reference:</strong><br>${formatApa(j.apa_reference)}</div>
+      <div style="margin-top:8px;font-size:.9em;"><strong>Inline:</strong> ${esc(j.apa_inline)}</div>
+      <div style="margin-top:4px;font-size:.85em;color:#999;">Type: ${j.apa_type}</div>`;
+  } catch (e) {
+    el.innerHTML = `<span style="color:#c62828">❌ ${e.message}</span>`;
+  }
+  document.getElementById('citDocCard').style.display = 'block';
+}
+
+/* ---- Chat ---- */
+async function doChat() {
+  const msg = v('chatMsg');
+  if (!msg) return alert('Enter a message');
+  const btn = document.getElementById('chatBtn');
+  btn.disabled = true;
+  setStatus('chatStatus', '<span class="spinner"></span> Running 7-agent pipeline... (may take 1-3 min)');
+  try {
+    const r = await fetch(API + '/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    setStatus('chatStatus', '✅ Done');
+    document.getElementById('chatResult').style.display = 'block';
+    document.getElementById('chatResultJson').textContent = JSON.stringify(j, null, 2);
+  } catch (e) {
+    setStatus('chatStatus', '❌ ' + e.message);
+  }
+  btn.disabled = false;
+}
+
+/* ---- Helpers ---- */
+function v(id) { return document.getElementById(id).value.trim(); }
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function setStatus(id, html) { document.getElementById(id).innerHTML = html; }
+function showProgress(show, pct) {
+  const el = document.getElementById('uploadProgress');
+  el.style.display = show ? 'block' : 'none';
+  document.getElementById('uploadFill').style.width = (pct || 0) + '%';
+}
+function formatApa(text) {
+  if (!text) return '';
+  return esc(text).replace(/\*([^*]+)\*/g, '<em>$1</em>');
+}
+function fmtSize(b) {
+  if (b == null) return '—';
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b/1024).toFixed(1) + ' KiB';
+  return (b/1048576).toFixed(1) + ' MiB';
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})
+       + ' ' + d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'});
+}
+
+/* ============================================================
+   MINIO SYNC TAB
+   ============================================================ */
+const syncExpanded = new Set();
+let syncActiveNode = null;
+
+async function syncTree() {
+  document.getElementById('syncTreeRoot').innerHTML =
+    '<div style="padding:20px;text-align:center;color:#bbb;"><span class="spinner"></span> Syncing…</div>';
+  document.getElementById('syncStatus').innerHTML = '';
+  try {
+    const r = await fetch(API + '/api/documents/minio/tree');
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const j = await r.json();
+    const total = j.total_files || 0;
+    document.getElementById('syncFileCount').textContent = total + ' file' + (total !== 1 ? 's' : '');
+    // Stats
+    const allFiles = flattenTree(j.tree || []);
+    const registered = allFiles.filter(f => f.ingestion_status && f.ingestion_status !== 'not_registered').length;
+    const embedded   = allFiles.filter(f => f.ingestion_status === 'completed').length;
+    const unregistered = allFiles.filter(f => !f.ingestion_status || f.ingestion_status === 'not_registered').length;
+    document.getElementById('syncSummary').textContent =
+      `✅ ${embedded} embedded  |  🔵 ${registered - embedded} registered  |  ⚪ ${unregistered} unregistered`;
+    renderSyncTree(j.tree || [], document.getElementById('syncTreeRoot'), 0);
+  } catch (err) {
+    document.getElementById('syncTreeRoot').innerHTML =
+      `<div style="padding:16px;color:#c62828;font-size:.85em;">❌ ${esc(err.message)}</div>`;
+  }
+}
+
+function flattenTree(nodes) {
+  const out = [];
+  for (const n of nodes) {
+    if (n.type === 'file') out.push(n);
+    else if (n.children) out.push(...flattenTree(n.children));
+  }
+  return out;
+}
+
+function renderSyncTree(nodes, container, depth) {
+  container.innerHTML = '';
+  if (!nodes.length) {
+    container.innerHTML = '<div style="padding:8px 16px;color:#bbb;font-size:.82em;">Empty</div>';
+    return;
+  }
+  const sorted = [...nodes].sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  for (const node of sorted) container.appendChild(buildSyncNode(node, depth));
+}
+
+function buildSyncNode(node, depth) {
+  const wrap = document.createElement('div');
+  const pad = 8 + depth * 16;
+
+  if (node.type === 'folder') {
+    const isOpen = syncExpanded.has(node.path);
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex;align-items:center;padding:5px 8px 5px ${pad}px;cursor:pointer;gap:5px;user-select:none;border-radius:4px;`;
+    row.onmouseenter = () => row.style.background = '#efefef';
+    row.onmouseleave = () => row.style.background = '';
+
+    const arrow = document.createElement('span');
+    arrow.style.cssText = 'font-size:.6em;color:#999;width:10px;display:inline-block;';
+    arrow.textContent = isOpen ? '▼' : '▶';
+    const icon = document.createElement('span');
+    icon.textContent = isOpen ? '📂' : '📁';
+    const label = document.createElement('span');
+    label.textContent = node.name;
+    label.style.cssText = 'font-weight:600;font-size:.88em;color:#333;flex:1;';
+
+    // Status summary badge for folder
+    const files = (node.children||[]).filter(c=>c.type==='file');
+    const done = files.filter(f=>f.ingestion_status==='completed').length;
+    const unreg = files.filter(f=>!f.ingestion_status||f.ingestion_status==='not_registered').length;
+    const badge = document.createElement('span');
+    badge.style.cssText = 'font-size:.68em;color:#888;margin-left:auto;padding-right:4px;white-space:nowrap;';
+    const parts = [];
+    if (done) parts.push(`🟢${done}`);
+    if (unreg) parts.push(`⚪${unreg}`);
+    if (files.length - done - unreg > 0) parts.push(`🔵${files.length-done-unreg}`);
+    badge.textContent = parts.join(' ');
+
+    row.append(arrow, icon, label, badge);
+
+    const childWrap = document.createElement('div');
+    childWrap.style.display = isOpen ? 'block' : 'none';
+    if (isOpen && node.children) renderSyncTree(node.children, childWrap, depth+1);
+
+    row.onclick = () => {
+      const open = childWrap.style.display !== 'none';
+      childWrap.style.display = open ? 'none' : 'block';
+      arrow.textContent = open ? '▶' : '▼';
+      icon.textContent  = open ? '📁' : '📂';
+      if (open) syncExpanded.delete(node.path); else syncExpanded.add(node.path);
+      if (!open && node.children && !childWrap.hasChildNodes())
+        renderSyncTree(node.children, childWrap, depth+1);
+    };
+    wrap.append(row, childWrap);
+
+  } else {
+    // File
+    const st = node.ingestion_status || 'not_registered';
+    let dot;
+    if (st === 'completed')     dot = '🟢';
+    else if (st === 'failed')   dot = '🔴';
+    else if (st === 'processing') dot = '🟡';
+    else if (st === 'pending')  dot = '🔵';
+    else if (node._draft)       dot = '✏️';
+    else                         dot = '⚪';
+
+    const extIcon = {pdf:'📄',docx:'📝',txt:'📃',md:'📋'}[node.ext] || '📄';
+    const row = document.createElement('div');
+    const isActive = syncActiveNode && syncActiveNode.path === node.path;
+    row.style.cssText = `display:flex;align-items:center;padding:5px 8px 5px ${pad}px;cursor:pointer;gap:5px;user-select:none;border-radius:4px;${isActive?'background:#e8eaf6;':''}` ;
+    row.onmouseenter = () => { if (!isActive) row.style.background='#f0f0f0'; };
+    row.onmouseleave = () => { if (!isActive) row.style.background=''; };
+
+    const si = document.createElement('span'); si.style.width='10px';
+    const fi2 = document.createElement('span'); fi2.textContent = extIcon;
+    const nm = document.createElement('span');
+    nm.textContent = node.name;
+    nm.style.cssText = 'font-size:.85em;color:#333;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    const ds = document.createElement('span');
+    ds.textContent = dot; ds.title = st;
+    ds.style.cssText = 'font-size:.7em;margin-left:auto;flex-shrink:0;';
+
+    row.append(si, fi2, nm, ds);
+    row.onclick = () => openSyncViewer(node);
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
+async function openSyncViewer(node) {
+  syncActiveNode = node;
+  // Refresh tree highlight
+  document.querySelectorAll('#syncTreeRoot div[data-active]').forEach(el => el.removeAttribute('data-active'));
+
+  const pathEl = document.getElementById('syncViewerPath');
+  pathEl.textContent = node.path;
+
+  const actEl = document.getElementById('syncViewerActions');
+  actEl.innerHTML = '';
+
+  const body = document.getElementById('syncViewerBody');
+  const st = node.ingestion_status || 'not_registered';
+
+  // ---- Build viewer based on status ----
+  if (st === 'completed') {
+    // Fully registered + embedded
+    renderSyncViewerRegistered(node, body, actEl);
+  } else if (st === 'failed' || st === 'processing' || st === 'pending') {
+    renderSyncViewerRegistered(node, body, actEl);
+  } else {
+    // not_registered → show APA draft panel
+    renderSyncViewerUnregistered(node, body, actEl);
+  }
+}
+
+function renderSyncViewerRegistered(node, body, actEl) {
+  const st = node.ingestion_status || 'not_registered';
+  const stBadge = st === 'completed'
+    ? `<span class="badge badge-green">✅ Embedded — ${node.chunk_count||0} chunks</span>`
+    : st === 'failed'
+    ? `<span class="badge badge-red">❌ Embedding failed</span>`
+    : st === 'processing'
+    ? `<span class="badge badge-yellow">⏳ Processing…</span>`
+    : `<span class="badge badge-blue">🔵 Registered</span>`;
+
+  if (node.document_id) {
+    const a = document.createElement('a');
+    a.href = API + '/api/documents/open/' + node.document_id;
+    a.target = '_blank'; a.textContent = '🔗 Open';
+    a.style.cssText = 'font-size:.8em;padding:4px 10px;border:1px solid #c5cae9;border-radius:4px;text-decoration:none;color:#667eea;background:#fff;';
+    actEl.appendChild(a);
+  }
+  if (st === 'failed' && node.document_id) {
+    const rb = document.createElement('button');
+    rb.textContent = '🔄 Re-ingest';
+    rb.style.cssText = 'font-size:.8em;padding:4px 10px;border:1px solid #e65100;color:#e65100;border-radius:4px;cursor:pointer;background:#fff3e0;';
+    rb.onclick = async () => {
+      rb.disabled = true; rb.textContent = '⏳…';
+      try {
+        const r = await fetch(API + '/api/documents/' + node.document_id + '/reingest', {method:'POST'});
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.detail || r.statusText);
+        alert(`✅ Re-ingested: ${j.chunks_ingested} chunks`);
+        syncTree();
+      } catch(e) { alert('❌ ' + e.message); rb.disabled = false; rb.textContent = '🔄 Re-ingest'; }
+    };
+    actEl.appendChild(rb);
+  }
+
+  body.innerHTML = `
+    <div style="padding:18px 22px;">
+      <div style="margin-bottom:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;">
+        <div style="font-size:1em;font-weight:700;color:#333;">${esc(node.title||node.name)}</div>
+        ${stBadge}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:.88em;">
+        <tr><td style="padding:6px 10px;color:#666;width:140px;">Path</td><td style="padding:6px 10px;font-family:monospace;color:#444;">${esc(node.path)}</td></tr>
+        <tr style="background:#f9f9f9"><td style="padding:6px 10px;color:#666;">Size</td><td style="padding:6px 10px;">${fmtSize(node.size)}</td></tr>
+        <tr><td style="padding:6px 10px;color:#666;">Modified</td><td style="padding:6px 10px;">${fmtDate(node.last_modified)}</td></tr>
+        <tr style="background:#f9f9f9"><td style="padding:6px 10px;color:#666;">Document ID</td><td style="padding:6px 10px;">${node.document_id||'—'}</td></tr>
+        <tr><td style="padding:6px 10px;color:#666;">Chunks</td><td style="padding:6px 10px;">${node.chunk_count||0}</td></tr>
+      </table>
+      ${node.apa_citation ? `<div style="margin-top:16px;"><div style="font-size:.82em;font-weight:600;color:#555;margin-bottom:6px;">APA Citation</div><div class="apa-ref">${esc(node.apa_citation)}</div><button onclick="navigator.clipboard.writeText(${JSON.stringify(node.apa_citation)}).then(()=>alert('📋 Copied!'))" style="font-size:.8em;padding:4px 12px;border:1px solid #ccc;border-radius:4px;cursor:pointer;background:#fff;margin-top:4px;">📋 Copy APA</button></div>` : ''}
+    </div>`;
+}
+
+function renderSyncViewerUnregistered(node, body, actEl) {
+  // Show APA draft form
+  body.innerHTML = `
+    <div style="padding:18px 22px;max-width:720px;">
+      <div style="margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:1em;font-weight:700;color:#333;">${esc(node.name)}</span>
+        <span class="badge badge-blue">⚪ Not registered</span>
+        <span style="font-size:.8em;color:#888;font-family:monospace;">${esc(node.path)}</span>
+      </div>
+      <div style="margin-bottom:16px;padding:10px 14px;background:#fff8e1;border-radius:6px;border-left:3px solid #f9a825;font-size:.88em;color:#5d4037;">
+        ⚠ This file is not yet registered in the document registry. Generate an APA draft using AI, review it, then <strong>Approve</strong> to register and embed it.
+      </div>
+
+      <div style="display:flex;gap:10px;margin-bottom:18px;">
+        <button id="draftBtn" onclick="generateApaDraft(${JSON.stringify(node.path)})" class="btn" style="padding:9px 20px;font-size:.9em;">✨ Generate APA Draft with AI</button>
+        <span id="draftStatus" style="font-size:.85em;color:#666;align-self:center;"></span>
+      </div>
+
+      <div id="apaDraftForm" style="display:none;">
+        <div style="font-weight:700;color:#444;margin-bottom:10px;font-size:.95em;">📋 APA Draft — Review &amp; Edit</div>
+        <div id="aiConfidence" style="margin-bottom:10px;"></div>
+
+        <div class="row">
+          <div style="flex:3"><label>Title</label><input type="text" id="dTitle" placeholder="Title"></div>
+          <div><label>Year</label><input type="text" id="dYear" placeholder="2025"></div>
+        </div>
+        <div class="row">
+          <div style="flex:2"><label>Authors / Organisation</label><input type="text" id="dAuthors" placeholder="e.g. กรมทางหลวง"></div>
+          <div style="flex:2"><label>Publisher</label><input type="text" id="dPublisher" placeholder="e.g. กระทรวงคมนาคม"></div>
+        </div>
+        <div class="row">
+          <div><label>Doc Type</label>
+            <select id="dApaType">
+              <option value="report">Report</option><option value="book">Book</option>
+              <option value="article">Article</option><option value="website">Website</option>
+              <option value="dataset">Dataset</option><option value="law">Law</option>
+            </select>
+          </div>
+          <div><label>Topic</label>
+            <select id="dTopic">
+              <option value="accident">accident</option>
+              <option value="mental_health">mental_health</option>
+              <option value="nutrition">nutrition</option>
+              <option value="general">general</option>
+            </select>
+          </div>
+          <div><label>DOI</label><input type="text" id="dDoi" placeholder=""></div>
+        </div>
+        <div class="row">
+          <div><label>Edition</label><input type="text" id="dEdition" placeholder=""></div>
+          <div><label>Volume</label><input type="text" id="dVolume" placeholder=""></div>
+          <div><label>Pages</label><input type="text" id="dPages" placeholder=""></div>
+        </div>
+
+        <!-- Live APA preview -->
+        <div style="font-size:.82em;font-weight:600;color:#555;margin:10px 0 6px;">Preview</div>
+        <div id="dApaPreview" class="apa-ref" style="min-height:40px;"><em>Fill fields above…</em></div>
+
+        <div style="margin-top:18px;display:flex;gap:10px;align-items:center;">
+          <button class="btn" onclick="approveApaDraft(${JSON.stringify(node.path)})" style="background:linear-gradient(135deg,#2e7d32,#1b5e20);padding:10px 28px;">✅ Approve &amp; Ingest</button>
+          <button class="btn" style="background:#f5f5f5;color:#666;border:1.5px solid #ccc;padding:10px 20px;" onclick="document.getElementById('apaDraftForm').style.display='none';">✕ Cancel</button>
+          <span id="approveStatus" style="font-size:.88em;color:#666;"></span>
+        </div>
+      </div>
+    </div>`;
+
+  // Hook live preview
+  ['dTitle','dAuthors','dYear','dPublisher','dDoi','dApaType','dEdition','dVolume','dPages'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateDraftPreview);
+    if (el && el.tagName === 'SELECT') el.addEventListener('change', updateDraftPreview);
+  });
+  document.getElementById('dApaType')?.addEventListener('change', updateDraftPreview);
+}
+
+function updateDraftPreview() {
+  const dv = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const t = dv('dApaType'), authors = dv('dAuthors') || dv('dTitle') || 'ไม่ระบุ',
+        year = dv('dYear') || 'n.d.', title = dv('dTitle') || 'ไม่ระบุ',
+        pub = dv('dPublisher'), doi = dv('dDoi'), ed = dv('dEdition'),
+        vol = dv('dVolume'), pages = dv('dPages');
+  const it = s => `<em>${esc(s)}</em>`;
+  let ref = '';
+  if (t === 'article') {
+    ref = `${esc(authors)}. (${esc(year)}). ${esc(title)}.`;
+    if (pub) ref += ` ${it(pub)}`;
+    if (vol) ref += `, ${esc(vol)}`;
+    if (pages) ref += `, ${esc(pages)}`;
+    ref += '.';
+    if (doi) ref += ` https://doi.org/${esc(doi)}`;
+  } else if (t === 'law') {
+    ref = `${esc(title)}, ${esc(authors)} (${esc(year)}).`;
+    if (vol) ref += ` ราชกิจจานุเบกษา เล่ม ${esc(vol)}.`;
+  } else {
+    ref = `${esc(authors)}. (${esc(year)}). ${it(title)}${ed ? ' (' + esc(ed) + ')' : ''}.`;
+    if (pub) ref += ` ${esc(pub)}.`;
+    if (doi) ref += ` https://doi.org/${esc(doi)}`;
+  }
+  const el = document.getElementById('dApaPreview');
+  if (el) el.innerHTML = ref || '<em>Fill fields above…</em>';
+}
+
+async function generateApaDraft(path) {
+  const btn = document.getElementById('draftBtn');
+  const statusEl = document.getElementById('draftStatus');
+  btn.disabled = true;
+  statusEl.innerHTML = '<span class="spinner"></span> AI is analysing…';
+  try {
+    const r = await fetch(API + '/api/documents/minio/apa-draft', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({path}),
+    });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const d = await r.json();
+
+    // Fill form
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+    set('dTitle', d.title); set('dAuthors', d.apa_authors); set('dYear', d.apa_year);
+    set('dPublisher', d.apa_publisher); set('dDoi', d.apa_doi);
+    set('dEdition', d.apa_edition); set('dVolume', d.apa_volume); set('dPages', d.apa_pages);
+    // Set selects
+    ['dApaType','dTopic'].forEach(sid => {
+      const sel = document.getElementById(sid);
+      const key = sid === 'dApaType' ? d.apa_type : d.topic;
+      if (sel && key) { const opt = sel.querySelector(`option[value="${key}"]`); if (opt) sel.value = key; }
+    });
+
+    // Confidence badge
+    const conf = d.confidence || 'low';
+    const confCol = conf === 'high' ? '#2e7d32' : conf === 'medium' ? '#f57f17' : '#c62828';
+    const confBadge = `<span style="background:#f5f5f5;padding:3px 10px;border-radius:10px;font-size:.8em;color:${confCol};font-weight:600;border:1px solid ${confCol};">AI Confidence: ${conf.toUpperCase()}</span>`;
+    document.getElementById('aiConfidence').innerHTML = confBadge
+      + (d.reason ? ` <span style="font-size:.8em;color:#888;margin-left:6px;">${esc(d.reason)}</span>` : '');
+
+    document.getElementById('apaDraftForm').style.display = 'block';
+    statusEl.innerHTML = '<span style="color:#2e7d32;">✅ Draft ready — review and approve</span>';
+    updateDraftPreview();
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:#c62828;">❌ ' + esc(e.message) + '</span>';
+  }
+  btn.disabled = false;
+}
+
+async function approveApaDraft(path) {
+  const dv = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const payload = {
+    path, title: dv('dTitle'), topic: dv('dTopic'), apa_type: dv('dApaType'),
+    apa_authors: dv('dAuthors'), apa_year: dv('dYear'), apa_publisher: dv('dPublisher'),
+    apa_doi: dv('dDoi'), apa_url: '', apa_edition: dv('dEdition'),
+    apa_volume: dv('dVolume'), apa_pages: dv('dPages'),
+  };
+  if (!payload.title) { alert('Title is required'); return; }
+
+  const statusEl = document.getElementById('approveStatus');
+  statusEl.innerHTML = '<span class="spinner"></span> Registering &amp; embedding…';
+  document.querySelectorAll('#apaDraftForm button').forEach(b => b.disabled = true);
+
+  try {
+    const r = await fetch(API + '/api/documents/minio/approve', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    statusEl.innerHTML = `<span style="color:#2e7d32;">✅ Approved — Doc ID ${j.document_id}, ${j.chunks_ingested} chunks embedded</span>`;
+    // Refresh tree after a moment
+    setTimeout(syncTree, 800);
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:#c62828;">❌ ' + esc(e.message) + '</span>';
+    document.querySelectorAll('#apaDraftForm button').forEach(b => b.disabled = false);
+  }
+}
+
+async function batchIngestAll() {
+  const statusEl = document.getElementById('syncStatus');
+  statusEl.innerHTML = '<span class="spinner"></span> Ingesting all…';
+  try {
+    const r = await fetch(API + '/api/ingest', {method:'POST'});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    const n = j.ingested_count ?? j.total_ingested ?? 0;
+    const c = j.total_chunks ?? j.chunks_ingested ?? 0;
+    statusEl.innerHTML = `<span style="color:#2e7d32;">✅ ${n} file(s), ${c} chunks</span>`;
+    syncTree();
+  } catch(e) {
+    statusEl.innerHTML = '<span style="color:#c62828;">❌ ' + esc(e.message) + '</span>';
+  }
+}
+
+// Resize handle for sync panel
+(function() {
+  const resizer = document.getElementById('syncResizer');
+  if (!resizer) return;
+  let drag=false, sx=0, sw=0;
+  resizer.addEventListener('mousedown', e => {
+    drag=true; sx=e.clientX; sw=document.getElementById('syncTreePanel').offsetWidth;
+    document.body.style.cursor='col-resize'; document.body.style.userSelect='none';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!drag) return;
+    const w = Math.max(150, Math.min(480, sw+(e.clientX-sx)));
+    document.getElementById('syncTreePanel').style.width = w+'px';
+  });
+  document.addEventListener('mouseup', () => {
+    drag=false; document.body.style.cursor=''; document.body.style.userSelect='';
+  });
+})();
+</script>
+</body>
+</html>

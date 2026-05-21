@@ -1,0 +1,2168 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ThaiJO Research Report — Test UI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'IBM Plex Sans Thai', sans-serif; }
+        .fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .pulse-dot { animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+        .article-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.1); }
+        .article-card { transition: all 0.2s ease; }
+        .progress-step.active { border-left-color: #6366f1; }
+        .progress-step.done { border-left-color: #10b981; }
+        .progress-step.error { border-left-color: #ef4444; }
+        .tab-btn.active { background: white; color: #4f46e5; box-shadow: 0 2px 8px rgba(79,70,229,0.15); }
+        .prose h2 { font-size: 1.25rem; font-weight: 700; margin: 1.5rem 0 0.75rem; color: #1e293b; }
+        .prose h3 { font-size: 1.1rem; font-weight: 600; margin: 1.25rem 0 0.5rem; color: #334155; }
+        .prose p { margin: 0.5rem 0; line-height: 1.8; }
+        .prose table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.875rem; }
+        .prose th { background: #f1f5f9; padding: 0.5rem; text-align: left; border: 1px solid #e2e8f0; font-weight: 600; }
+        .prose td { padding: 0.5rem; border: 1px solid #e2e8f0; }
+        .prose ul, .prose ol { padding-left: 1.5rem; margin: 0.5rem 0; }
+        .prose li { margin: 0.25rem 0; }
+        .prose blockquote { border-left: 3px solid #6366f1; padding-left: 1rem; color: #64748b; margin: 0.75rem 0; }
+        .citation-tag { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
+        .citation-tag:hover { opacity: 0.85; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="sticky top-0 z-20 bg-gradient-to-r from-indigo-600 via-purple-600 to-violet-600 text-white shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="text-2xl">📚</div>
+                <div>
+                    <h1 class="text-lg font-bold tracking-tight">ThaiJO Research Report</h1>
+                    <p class="text-xs text-indigo-200">ค้นหาและสังเคราะห์บทความวิชาการจาก TCI-THAIJO</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3">
+                <div id="health-badge" class="flex items-center gap-1.5 bg-white/10 rounded-full px-3 py-1 text-xs">
+                    <span id="health-dot" class="w-2 h-2 rounded-full bg-gray-400"></span>
+                    <span id="health-text">Checking...</span>
+                </div>
+            </div>
+        </div>
+        <!-- Tabs -->
+        <div class="max-w-7xl mx-auto px-4 pb-2 flex gap-2">
+            <button onclick="switchTab('search')" id="tab-search" class="tab-btn active px-4 py-1.5 rounded-lg text-sm font-medium transition-all">
+                🔍 ค้นหาบทความ
+            </button>
+            <button onclick="switchTab('report')" id="tab-report" class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-white/70 hover:text-white transition-all">
+                📝 สร้างรายงานวิจัย
+            </button>
+            <button onclick="switchTab('status')" id="tab-status" class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-white/70 hover:text-white transition-all">
+                ⚙️ สถานะระบบ
+            </button>
+            <button onclick="switchTab('cache')" id="tab-cache" class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-white/70 hover:text-white transition-all">
+                🗄️ Cache
+            </button>
+            <button onclick="switchTab('agent-test')" id="tab-agent-test" class="tab-btn px-4 py-1.5 rounded-lg text-sm font-medium text-white/70 hover:text-white transition-all">
+                🧪 ทดสอบ Agent
+            </button>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-6">
+
+        <!-- ==================== TAB 1: Search ==================== -->
+        <div id="panel-search" class="space-y-6">
+            <!-- Search Form -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-4">🔍 ค้นหาบทความวิชาการ ThaiJO</h2>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-600 mb-1">คำค้นหา (2-5 คำ)</label>
+                        <input id="search-term" type="text" placeholder="อุบัติเหตุ ปัจจัยเสี่ยง ถนน"
+                            class="w-full border rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-indigo-300 focus:border-indigo-500 outline-none text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">จำนวนผลลัพธ์</label>
+                        <select id="search-size" class="w-full border rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                            <option value="3">3 บทความ</option>
+                            <option value="5" selected>5 บทความ</option>
+                            <option value="10">10 บทความ</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">โหมดค้นหา</label>
+                        <div class="flex items-center gap-3 pt-2">
+                            <label class="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" id="search-strict" checked class="w-4 h-4 text-indigo-600 rounded">
+                                <span class="text-sm text-gray-700">Strict mode</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+                <!-- Quick Search Examples -->
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <span class="text-xs text-gray-500 pt-1">ตัวอย่าง:</span>
+                    <button onclick="quickSearch('อุบัติเหตุ ปัจจัยเสี่ยง ถนน')" class="text-xs bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full hover:bg-indigo-100 transition">อุบัติเหตุทางถนน</button>
+                    <button onclick="quickSearch('โรคซึมเศร้า ผู้สูงอายุ')" class="text-xs bg-purple-50 text-purple-700 px-3 py-1 rounded-full hover:bg-purple-100 transition">ซึมเศร้าผู้สูงอายุ</button>
+                    <button onclick="quickSearch('เบาหวาน ป้องกัน พฤติกรรม')" class="text-xs bg-violet-50 text-violet-700 px-3 py-1 rounded-full hover:bg-violet-100 transition">ป้องกันเบาหวาน</button>
+                    <button onclick="quickSearch('PM2.5 สุขภาพ ระบบหายใจ')" class="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full hover:bg-blue-100 transition">PM2.5 & สุขภาพ</button>
+                    <button onclick="quickSearch('หมวกนิรภัย มอเตอร์ไซค์ ความปลอดภัย')" class="text-xs bg-green-50 text-green-700 px-3 py-1 rounded-full hover:bg-green-100 transition">หมวกนิรภัย</button>
+                </div>
+                <div class="mt-4 flex justify-end">
+                    <button onclick="searchThaiJO()" id="btn-search" class="bg-indigo-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-indigo-700 transition flex items-center gap-2 text-sm">
+                        <span>🔍</span> ค้นหา ThaiJO
+                    </button>
+                </div>
+            </div>
+
+            <!-- Search Results -->
+            <div id="search-results" class="hidden space-y-4">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-lg font-bold text-gray-800">ผลลัพธ์การค้นหา</h3>
+                    <span id="search-result-count" class="text-sm text-gray-500"></span>
+                </div>
+                <div id="search-result-cards" class="space-y-4"></div>
+            </div>
+
+            <!-- Search Loading -->
+            <div id="search-loading" class="hidden">
+                <div class="bg-white rounded-xl shadow-sm border p-8 text-center">
+                    <div class="flex justify-center gap-1 mb-3">
+                        <span class="w-3 h-3 bg-indigo-500 rounded-full pulse-dot"></span>
+                        <span class="w-3 h-3 bg-purple-500 rounded-full pulse-dot" style="animation-delay:0.2s"></span>
+                        <span class="w-3 h-3 bg-violet-500 rounded-full pulse-dot" style="animation-delay:0.4s"></span>
+                    </div>
+                    <p class="text-gray-600 text-sm">กำลังค้นหาบทความจาก TCI-THAIJO...</p>
+                    <p class="text-gray-400 text-xs mt-1">อาจใช้เวลา 10-60 วินาที (AI สรุปเนื้อหาบทความ)</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== TAB 2: Research Report ==================== -->
+        <div id="panel-report" class="hidden space-y-6">
+            <!-- Report Form -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-4">📝 สร้างรายงานทบทวนวรรณกรรม</h2>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">หัวข้อวิจัย</label>
+                        <input id="report-topic" type="text"
+                            placeholder="เช่น ปัจจัยเสี่ยงอุบัติเหตุทางถนนในประเทศไทย"
+                            class="w-full border rounded-lg px-4 py-3 focus:ring-2 focus:ring-indigo-300 focus:border-indigo-500 outline-none">
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-600 mb-1">จำนวนบทความสูงสุด</label>
+                            <input id="report-max-articles" type="range" min="5" max="20" value="15" class="w-full accent-indigo-600"
+                                oninput="document.getElementById('max-articles-val').textContent = this.value">
+                            <div class="flex justify-between text-xs text-gray-400 mt-1">
+                                <span>5</span>
+                                <span id="max-articles-val" class="font-bold text-indigo-600">15</span>
+                                <span>20</span>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-600 mb-1">จำนวน search queries</label>
+                            <select id="report-max-queries" class="w-full border rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                                <option value="2">2 queries</option>
+                                <option value="3">3 queries</option>
+                                <option value="4" selected>4 queries</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-600 mb-1">คะแนนความเกี่ยวข้องขั้นต่ำ</label>
+                            <select id="report-min-relevance" class="w-full border rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                                <option value="3">3 (กว้าง)</option>
+                                <option value="5" selected>5 (ปานกลาง)</option>
+                                <option value="7">7 (เข้มงวด)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <!-- Quick Topics -->
+                    <div class="flex flex-wrap gap-2">
+                        <span class="text-xs text-gray-500 pt-1">หัวข้อตัวอย่าง:</span>
+                        <button onclick="quickTopic('ปัจจัยเสี่ยงอุบัติเหตุทางถนนในประเทศไทย')" class="text-xs bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full hover:bg-indigo-100 transition">อุบัติเหตุทางถนน</button>
+                        <button onclick="quickTopic('โรคซึมเศร้าและภาวะซึมเศร้าในผู้สูงอายุไทย')" class="text-xs bg-purple-50 text-purple-700 px-3 py-1 rounded-full hover:bg-purple-100 transition">ซึมเศร้าผู้สูงอายุ</button>
+                        <button onclick="quickTopic('ผลกระทบของ PM2.5 ต่อสุขภาพระบบทางเดินหายใจ')" class="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full hover:bg-blue-100 transition">PM2.5 & สุขภาพ</button>
+                        <button onclick="quickTopic('การป้องกันโรคเบาหวานชนิดที่ 2 ด้วยการปรับพฤติกรรม')" class="text-xs bg-green-50 text-green-700 px-3 py-1 rounded-full hover:bg-green-100 transition">ป้องกันเบาหวาน</button>
+                    </div>
+                    <div class="flex justify-end">
+                        <button onclick="generateReport()" id="btn-report" class="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-8 py-3 rounded-lg font-bold hover:from-indigo-700 hover:to-purple-700 transition flex items-center gap-2">
+                            <span>📝</span> สร้างรายงานวิจัย
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Progress Timeline -->
+            <div id="report-progress" class="hidden bg-white rounded-xl shadow-sm border p-6">
+                <h3 class="text-sm font-bold text-gray-700 mb-4 flex items-center gap-2">
+                    <span class="pulse-dot inline-block w-2.5 h-2.5 bg-indigo-500 rounded-full"></span>
+                    กำลังประมวลผล...
+                </h3>
+                <div id="progress-timeline" class="space-y-3"></div>
+                <div id="progress-summary" class="hidden mt-4 pt-4 border-t">
+                    <div class="grid grid-cols-4 gap-4 text-center">
+                        <div>
+                            <div id="stat-queries" class="text-2xl font-bold text-indigo-600">—</div>
+                            <div class="text-xs text-gray-500">Queries</div>
+                        </div>
+                        <div>
+                            <div id="stat-found" class="text-2xl font-bold text-purple-600">—</div>
+                            <div class="text-xs text-gray-500">บทความพบ</div>
+                        </div>
+                        <div>
+                            <div id="stat-selected" class="text-2xl font-bold text-green-600">—</div>
+                            <div class="text-xs text-gray-500">คัดเลือก</div>
+                        </div>
+                        <div>
+                            <div id="stat-time" class="text-2xl font-bold text-orange-600">—</div>
+                            <div class="text-xs text-gray-500">วินาที</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Report Output -->
+            <div id="report-output" class="hidden space-y-6">
+                <!-- Report Content -->
+                <div class="bg-white rounded-xl shadow-sm border p-6">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="text-lg font-bold text-gray-800">📄 รายงานทบทวนวรรณกรรม</h3>
+                        <button onclick="copyReport()" class="text-sm text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                            📋 คัดลอก
+                        </button>
+                    </div>
+                    <div id="report-content" class="prose max-w-none"></div>
+                </div>
+
+                <!-- Charts -->
+                <div id="report-charts" class="hidden">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4">📊 กราฟประกอบ</h3>
+                    <div id="chart-container" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+                </div>
+
+                <!-- Article Summary Table -->
+                <div id="report-tables" class="hidden bg-white rounded-xl shadow-sm border p-6">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4">📋 ตารางสรุปบทความ</h3>
+                    <div id="table-container" class="overflow-x-auto"></div>
+                </div>
+
+                <!-- Citations / Bibliography -->
+                <div id="report-citations" class="hidden bg-white rounded-xl shadow-sm border p-6">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4">📚 เอกสารอ้างอิง (APA 7th Edition)</h3>
+                    <div id="citations-list" class="space-y-3"></div>
+                </div>
+
+                <!-- Follow-ups -->
+                <div id="report-followups" class="hidden bg-white rounded-xl shadow-sm border p-6">
+                    <h3 class="text-lg font-bold text-gray-800 mb-4">❓ คำถามวิจัยเพิ่มเติม</h3>
+                    <div id="followups-list" class="space-y-2"></div>
+                </div>
+
+                <!-- Raw JSON -->
+                <details class="bg-white rounded-xl shadow-sm border p-6">
+                    <summary class="text-sm font-medium text-gray-500 cursor-pointer hover:text-gray-700">🔧 Raw JSON Response</summary>
+                    <pre id="report-raw-json" class="mt-4 bg-gray-50 p-4 rounded-lg text-xs overflow-x-auto max-h-96 overflow-y-auto"></pre>
+                </details>
+            </div>
+        </div>
+
+        <!-- ==================== TAB 3: Status ==================== -->
+        <div id="panel-status" class="hidden space-y-6">
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-4">⚙️ สถานะระบบ ThaiJO</h2>
+                <div class="space-y-4">
+                    <button onclick="checkThaiJOStatus()" class="bg-indigo-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-indigo-700 transition text-sm">
+                        🔄 ตรวจสอบสถานะ
+                    </button>
+                    <div id="status-result" class="hidden">
+                        <div id="status-cards" class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Agent Health -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-4">🏥 สถานะ Agent Backend</h2>
+                <button onclick="checkAgentHealth()" class="bg-green-600 text-white px-6 py-2.5 rounded-lg font-medium hover:bg-green-700 transition text-sm">
+                    🔄 ตรวจสอบ Health
+                </button>
+                <div id="agent-health-result" class="hidden mt-4"></div>
+            </div>
+
+            <!-- API Info -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-4">📡 API Endpoints</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="bg-gray-50">
+                                <th class="px-4 py-2 text-left font-medium text-gray-600">Method</th>
+                                <th class="px-4 py-2 text-left font-medium text-gray-600">Path</th>
+                                <th class="px-4 py-2 text-left font-medium text-gray-600">Description</th>
+                                <th class="px-4 py-2 text-left font-medium text-gray-600">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y">
+                            <tr><td class="px-4 py-2"><span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">POST</span></td><td class="px-4 py-2 font-mono text-xs">/api/thaijo/search</td><td class="px-4 py-2 text-gray-600">ค้นหาบทความ ThaiJO</td><td class="px-4 py-2 text-green-600">✅ Active</td></tr>
+                            <tr><td class="px-4 py-2"><span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">GET</span></td><td class="px-4 py-2 font-mono text-xs">/api/thaijo/status</td><td class="px-4 py-2 text-gray-600">สถานะ ThaiJO service</td><td class="px-4 py-2 text-green-600">✅ Active</td></tr>
+                            <tr><td class="px-4 py-2"><span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">POST</span></td><td class="px-4 py-2 font-mono text-xs">/api/thaijo/research</td><td class="px-4 py-2 text-gray-600">สร้างรายงานวิจัย</td><td class="px-4 py-2 text-green-600">✅ Active</td></tr>
+                            <tr><td class="px-4 py-2"><span class="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs font-bold">POST</span></td><td class="px-4 py-2 font-mono text-xs">/api/thaijo/research/stream</td><td class="px-4 py-2 text-gray-600">สร้างรายงาน (SSE)</td><td class="px-4 py-2 text-green-600">✅ Active</td></tr>
+                            <tr><td class="px-4 py-2"><span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">GET</span></td><td class="px-4 py-2 font-mono text-xs">/api/thaijo/cache</td><td class="px-4 py-2 text-gray-600">รายการ Cache</td><td class="px-4 py-2 text-green-600">✅ Active</td></tr>
+                            <tr><td class="px-4 py-2"><span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">GET</span></td><td class="px-4 py-2 font-mono text-xs">/api/thaijo/cache/stats</td><td class="px-4 py-2 text-gray-600">สถิติ Cache</td><td class="px-4 py-2 text-green-600">✅ Active</td></tr>
+                            <tr><td class="px-4 py-2"><span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">GET</span></td><td class="px-4 py-2 font-mono text-xs">/api/thaijo/cache/{key}</td><td class="px-4 py-2 text-gray-600">ดูสรุปเต็ม</td><td class="px-4 py-2 text-green-600">✅ Active</td></tr>
+                            <tr><td class="px-4 py-2"><span class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-bold">DELETE</span></td><td class="px-4 py-2 font-mono text-xs">/api/thaijo/cache/{key}</td><td class="px-4 py-2 text-gray-600">ลบรายการ Cache</td><td class="px-4 py-2 text-green-600">✅ Active</td></tr>
+                            <tr><td class="px-4 py-2"><span class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-xs font-bold">DELETE</span></td><td class="px-4 py-2 font-mono text-xs">/api/thaijo/cache</td><td class="px-4 py-2 text-gray-600">ล้าง Cache ทั้งหมด</td><td class="px-4 py-2 text-green-600">✅ Active</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <!-- Evidence Debug Panel -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-bold text-gray-800">🔍 Evidence Registry Debug</h2>
+                    <div class="flex gap-2">
+                        <button onclick="loadEvidenceDebug(false)" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
+                            📋 โหลดทั้งหมด
+                        </button>
+                        <button onclick="loadEvidenceDebug(true)" class="bg-yellow-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-yellow-700 transition">
+                            ⚠️ URL ผิดเท่านั้น
+                        </button>
+                        <button onclick="fixEvidenceUrls()" id="btn-fix-evidence" class="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 transition">
+                            🔧 Fix Download URLs
+                        </button>
+                    </div>
+                </div>
+                <div id="evidence-fix-result" class="hidden mb-3 p-3 rounded-lg border text-sm"></div>
+                <div id="evidence-debug-stats" class="hidden grid grid-cols-2 gap-4 mb-4">
+                    <div class="bg-gray-50 rounded-lg p-3 text-center">
+                        <div id="ev-total" class="text-2xl font-bold text-gray-700">—</div>
+                        <div class="text-xs text-gray-500">ทั้งหมด</div>
+                    </div>
+                    <div class="bg-red-50 rounded-lg p-3 text-center">
+                        <div id="ev-bad" class="text-2xl font-bold text-red-600">—</div>
+                        <div class="text-xs text-gray-500">URL ผิด</div>
+                    </div>
+                </div>
+                <div id="evidence-debug-table" class="hidden overflow-x-auto">
+                    <table class="w-full text-xs">
+                        <thead>
+                            <tr class="bg-gray-50 text-left">
+                                <th class="px-3 py-2 font-medium text-gray-600">ID</th>
+                                <th class="px-3 py-2 font-medium text-gray-600">Title</th>
+                                <th class="px-3 py-2 font-medium text-gray-600">open_url</th>
+                                <th class="px-3 py-2 font-medium text-gray-600">source_ref</th>
+                                <th class="px-3 py-2 font-medium text-gray-600 text-center">สถานะ</th>
+                            </tr>
+                        </thead>
+                        <tbody id="evidence-debug-tbody" class="divide-y"></tbody>
+                    </table>
+                </div>
+                <div id="evidence-debug-empty" class="hidden text-sm text-gray-400 text-center py-4">ไม่มีข้อมูล</div>
+            </div>
+        </div>
+
+        <!-- ==================== TAB 4: Cache Inspector ==================== -->
+        <div id="panel-cache" class="hidden space-y-6">
+            <!-- Cache Stats -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-bold text-gray-800">🗄️ Redis Cache Inspector</h2>
+                    <div class="flex items-center gap-2">
+                        <button onclick="loadCache()" id="btn-cache-load" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition flex items-center gap-1">
+                            🔄 โหลด Cache
+                        </button>
+                        <button onclick="exportCache()" id="btn-cache-export" class="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition flex items-center gap-1">
+                            📥 Export
+                        </button>
+                        <button onclick="clearAllCache()" id="btn-cache-clear" class="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 transition flex items-center gap-1">
+                            🗑️ ล้างทั้งหมด
+                        </button>
+                        <button onclick="syncEvidenceRegistry()" id="btn-cache-sync" class="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-700 transition flex items-center gap-1">
+                            🔗 Sync Evidence
+                        </button>
+                    </div>
+                </div>
+                <!-- Sync Evidence Result Banner -->
+                <div id="sync-evidence-result" class="hidden mb-4 p-3 rounded-lg border text-sm"></div>
+                <!-- Stats Bar -->
+                <div class="grid grid-cols-3 gap-4 mb-4">
+                    <div class="bg-indigo-50 rounded-lg p-3 text-center">
+                        <div class="text-2xl font-bold text-indigo-700" id="cache-total-keys">—</div>
+                        <div class="text-xs text-indigo-500">Cached Items</div>
+                    </div>
+                    <div class="bg-purple-50 rounded-lg p-3 text-center">
+                        <div class="text-2xl font-bold text-purple-700" id="cache-total-size">—</div>
+                        <div class="text-xs text-purple-500">Total Size</div>
+                    </div>
+                    <div class="bg-green-50 rounded-lg p-3 text-center">
+                        <div class="text-2xl font-bold text-green-700" id="cache-redis-status">—</div>
+                        <div class="text-xs text-green-500">Redis Status</div>
+                    </div>
+                </div>
+                <!-- Search/Filter -->
+                <div class="flex gap-3">
+                    <input id="cache-filter" type="text" placeholder="🔍 ค้นหาใน cache (คำในสรุป)..." class="flex-1 border rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-indigo-300 outline-none" oninput="filterCache()">
+                    <span id="cache-filter-count" class="text-xs text-gray-400 pt-3"></span>
+                </div>
+            </div>
+
+            <!-- Cache Table -->
+            <div id="cache-table-container" class="bg-white rounded-xl shadow-sm border overflow-hidden">
+                <div id="cache-loading" class="hidden p-8 text-center text-gray-500 text-sm">
+                    <span class="pulse-dot inline-block w-3 h-3 bg-indigo-500 rounded-full mr-2"></span> กำลังโหลด...
+                </div>
+                <div id="cache-empty" class="hidden p-8 text-center text-gray-400 text-sm">
+                    📭 ไม่มีข้อมูลใน Cache
+                </div>
+                <div id="cache-table-wrapper" class="hidden overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-4 py-2 text-left font-medium text-gray-600">#</th>
+                                <th class="px-4 py-2 text-left font-medium text-gray-600">Key</th>
+                                <th class="px-4 py-2 text-left font-medium text-gray-600">สรุปเนื้อหา (Preview)</th>
+                                <th class="px-4 py-2 text-left font-medium text-gray-600">Size</th>
+                                <th class="px-4 py-2 text-left font-medium text-gray-600">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cache-tbody" class="divide-y"></tbody>
+                    </table>
+                </div>
+                <!-- Pagination -->
+                <div id="cache-pagination" class="hidden flex items-center justify-between px-4 py-3 bg-gray-50 border-t">
+                    <button onclick="cachePrevPage()" id="btn-cache-prev" class="text-sm px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 transition disabled:opacity-50" disabled>← ก่อนหน้า</button>
+                    <span id="cache-page-info" class="text-xs text-gray-500"></span>
+                    <button onclick="cacheNextPage()" id="btn-cache-next" class="text-sm px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 transition disabled:opacity-50" disabled>ถัดไป →</button>
+                </div>
+            </div>
+
+            <!-- Expanded Summary Panel -->
+            <div id="cache-detail-panel" class="hidden bg-white rounded-xl shadow-sm border p-6 fade-in">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-md font-bold text-gray-800">📄 สรุปเนื้อหาเต็ม</h3>
+                    <div class="flex items-center gap-2">
+                        <button onclick="copyCacheSummary()" class="bg-indigo-100 text-indigo-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-indigo-200 transition">📋 คัดลอก</button>
+                        <button onclick="deleteCacheEntry()" class="bg-red-100 text-red-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-red-200 transition">🗑️ ลบ</button>
+                        <button onclick="closeCacheDetail()" class="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-gray-200 transition">✕ ปิด</button>
+                    </div>
+                </div>
+                <div class="bg-gray-50 rounded-lg p-2 mb-2">
+                    <span class="text-xs text-gray-500">Key: </span><span id="cache-detail-key" class="font-mono text-xs text-gray-700"></span>
+                </div>
+                <div id="cache-detail-summary" class="prose max-h-96 overflow-y-auto text-sm leading-relaxed text-gray-700 whitespace-pre-wrap"></div>
+            </div>
+
+            <!-- Data Flow Diagram -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-4">🔄 Data Flow: ThaiJO Search Pipeline</h2>
+                <div class="flex items-center justify-center gap-2 flex-wrap text-sm">
+                    <div class="bg-blue-100 text-blue-800 px-4 py-3 rounded-lg font-medium text-center">
+                        <div class="text-lg">👤</div>
+                        <div>User</div>
+                    </div>
+                    <div class="text-gray-400 text-xl">→</div>
+                    <div class="bg-indigo-100 text-indigo-800 px-4 py-3 rounded-lg font-medium text-center">
+                        <div class="text-lg">🤖</div>
+                        <div>Agent API</div>
+                        <div class="text-xs text-indigo-500">:8000</div>
+                    </div>
+                    <div class="text-gray-400 text-xl">→</div>
+                    <div class="bg-purple-100 text-purple-800 px-4 py-3 rounded-lg font-medium text-center">
+                        <div class="text-lg">🔬</div>
+                        <div>ThaiJO µservice</div>
+                        <div class="text-xs text-purple-500">:8505</div>
+                    </div>
+                    <div class="text-gray-400 text-xl">→</div>
+                    <div class="bg-amber-100 text-amber-800 px-4 py-3 rounded-lg font-medium text-center">
+                        <div class="text-lg">🌐</div>
+                        <div>TCI-THAIJO</div>
+                        <div class="text-xs text-amber-500">tci-thaijo.org</div>
+                    </div>
+                    <div class="text-gray-400 text-xl">→</div>
+                    <div class="bg-red-100 text-red-800 px-4 py-3 rounded-lg font-medium text-center">
+                        <div class="text-lg">🧠</div>
+                        <div>GPT-4.1</div>
+                        <div class="text-xs text-red-500">Summarize</div>
+                    </div>
+                    <div class="text-gray-400 text-xl">→</div>
+                    <div class="bg-green-100 text-green-800 px-4 py-3 rounded-lg font-medium text-center">
+                        <div class="text-lg">🗄️</div>
+                        <div>Redis Cache</div>
+                        <div class="text-xs text-green-500">:6379</div>
+                    </div>
+                </div>
+                <div class="mt-3 text-center text-xs text-gray-400">
+                    ThaiJO µservice ค้นหาจาก TCI-THAIJO → ดึง PDF link + APA citation → สรุปด้วย GPT-4.1 → เก็บใน Redis (key: pdf_cache:&lt;sha256&gt;)
+                </div>
+            </div>
+        </div>
+
+        <!-- ==================== TAB 5: Agent Test ==================== -->
+        <div id="panel-agent-test" class="hidden space-y-6">
+
+            <!-- Section A: Direct API Test -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-1">🔍 Section A — Direct API Test</h2>
+                <p class="text-xs text-gray-500 mb-4">ทดสอบ <code class="bg-gray-100 px-1 rounded">POST /api/thaijo/search</code> โดยตรง · แสดง title, apa_*, pdf_url จริง · badge 🟢 CACHE HIT เมื่อ &lt;500ms</p>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                    <div class="md:col-span-2">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">คำค้นหา</label>
+                        <input id="at-term" type="text" value="อุบัติเหตุ ปัจจัยเสี่ยง ถนน มุกดาหาร"
+                            class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1">จำนวน</label>
+                        <select id="at-size" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                            <option value="3">3</option>
+                            <option value="5" selected>5</option>
+                            <option value="10">10</option>
+                        </select>
+                    </div>
+                    <div class="flex items-end pb-1 gap-4">
+                        <label class="flex items-center gap-2 cursor-pointer text-sm">
+                            <input type="checkbox" id="at-strict" checked class="w-4 h-4 text-indigo-600 rounded">
+                            <span class="text-gray-700">Strict</span>
+                        </label>
+                        <button onclick="testDirectApi()" id="btn-at-api"
+                            class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition">
+                            🔍 ทดสอบ
+                        </button>
+                    </div>
+                </div>
+                <div id="at-api-result" class="space-y-3"></div>
+            </div>
+
+            <!-- Section B: Multi-Query Searcher -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-1">⚡ Section B — Multi-Query Searcher</h2>
+                <p class="text-xs text-gray-500 mb-4">จำลอง ThaiJO Multi-Query Searcher Agent · รัน query ทีละบรรทัด · dedup ด้วย pdf_url · แสดงผลตาราง per-query</p>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+                    <div class="md:col-span-3">
+                        <label class="block text-xs font-medium text-gray-600 mb-1">Search Queries (1 query ต่อบรรทัด)</label>
+                        <textarea id="at-queries" rows="4"
+                            class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300 outline-none font-mono"
+                            placeholder="อุบัติเหตุ ปัจจัยเสี่ยง ถนน มุกดาหาร&#10;อุบัติเหตุ ปัจจัยเสี่ยง ถนน ยโสธร&#10;อุบัติเหตุทางถนน พฤติกรรมเสี่ยง">อุบัติเหตุ ปัจจัยเสี่ยง ถนน มุกดาหาร
+อุบัติเหตุ ปัจจัยเสี่ยง ถนน ยโสธร
+อุบัติเหตุทางถนน พฤติกรรมเสี่ยง</textarea>
+                    </div>
+                    <div class="flex flex-col gap-3">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 mb-1">จำนวน/query</label>
+                            <select id="at-multi-size" class="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-300 outline-none">
+                                <option value="3">3</option>
+                                <option value="5" selected>5</option>
+                                <option value="10">10</option>
+                            </select>
+                        </div>
+                        <button onclick="testMultiQuery()" id="btn-at-multi"
+                            class="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition">
+                            ▶ รัน Multi-Query
+                        </button>
+                    </div>
+                </div>
+                <div id="at-multi-result" class="space-y-4"></div>
+            </div>
+
+            <!-- Section C: Sync Evidence -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-1">🔗 Section C — Sync Evidence Registry</h2>
+                <p class="text-xs text-gray-500 mb-4">อัปเดต <code class="bg-gray-100 px-1 rounded">evidence_registry</code> จาก ThaiJO search cache · <code class="bg-gray-100 px-1 rounded">POST /api/thaijo/sync-evidence</code></p>
+                <button onclick="testSyncEvidence()" id="btn-at-sync"
+                    class="bg-amber-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-amber-700 transition flex items-center gap-2">
+                    🔗 Sync Evidence Registry
+                </button>
+                <div id="at-sync-result" class="mt-4 space-y-3"></div>
+            </div>
+
+            <!-- Section D: Evidence Registry Audit -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-1">🔍 Section D — Evidence Registry Audit</h2>
+                <p class="text-xs text-gray-500 mb-4">ตรวจสอบ <code class="bg-gray-100 px-1 rounded">open_url</code> ของ ThaiJO ใน evidence_registry กับ thaijo_search_cache · <code class="bg-gray-100 px-1 rounded">GET /api/thaijo/evidence-audit</code></p>
+                <button onclick="auditEvidence()" id="btn-at-audit"
+                    class="bg-purple-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-purple-700 transition flex items-center gap-2">
+                    🔍 Audit Evidence Registry
+                </button>
+                <div id="at-audit-result" class="mt-4 space-y-3"></div>
+            </div>
+
+            <!-- Section E: ThaiJO Evidence Sync -->
+            <div class="bg-white rounded-xl shadow-sm border p-6">
+                <h2 class="text-lg font-bold text-gray-800 mb-1">🔄 Section E — ThaiJO Evidence Sync</h2>
+                <p class="text-xs text-gray-500 mb-4">
+                    เติม null fields ใน <code class="bg-gray-100 px-1 rounded">thaijo_search_cache</code>
+                    (rule-based + LLM) แล้ว register ทุก article ลง
+                    <code class="bg-gray-100 px-1 rounded">evidence_registry</code> พร้อม APA ·
+                    <code class="bg-gray-100 px-1 rounded">POST /api/thaijo/evidence-sync</code>
+                </p>
+                <div class="flex items-center gap-3 mb-4">
+                    <select id="at-sync-model" class="text-sm border rounded-lg px-3 py-2 bg-white text-gray-700">
+                        <option value="claude-haiku-4-5-20251001">claude-haiku-4-5 (เร็ว · ถูก)</option>
+                        <option value="claude-sonnet-4-6">claude-sonnet-4-6 (แม่นกว่า)</option>
+                    </select>
+                    <button onclick="runEvidenceSync()" id="btn-at-ev-sync"
+                        class="bg-teal-600 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-teal-700 transition flex items-center gap-2">
+                        🔄 Sync Evidence
+                    </button>
+                </div>
+                <div id="at-ev-sync-result" class="mt-2 space-y-3"></div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="max-w-7xl mx-auto px-4 py-6 text-center text-xs text-gray-400">
+        Musya Agent — ThaiJO Research Report Test UI | v1.0 | 2026-04-16
+    </footer>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let chartInstances = [];
+
+        // ======================== TAB SWITCHING ========================
+        function switchTab(tab) {
+            ['search', 'report', 'status', 'cache', 'agent-test'].forEach(t => {
+                document.getElementById(`panel-${t}`).classList.toggle('hidden', t !== tab);
+                document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
+                if (t !== tab) {
+                    document.getElementById(`tab-${t}`).classList.add('text-white/70');
+                } else {
+                    document.getElementById(`tab-${t}`).classList.remove('text-white/70');
+                }
+            });
+        }
+
+        // ======================== QUICK HELPERS ========================
+        function quickSearch(term) {
+            document.getElementById('search-term').value = term;
+            searchThaiJO();
+        }
+
+        function quickTopic(topic) {
+            document.getElementById('report-topic').value = topic;
+        }
+
+        // ======================== THAIJO SEARCH ========================
+        async function searchThaiJO() {
+            const term = document.getElementById('search-term').value.trim();
+            if (!term) { alert('กรุณาใส่คำค้นหา'); return; }
+
+            const size = parseInt(document.getElementById('search-size').value);
+            const strict = document.getElementById('search-strict').checked;
+
+            document.getElementById('search-loading').classList.remove('hidden');
+            document.getElementById('search-results').classList.add('hidden');
+            document.getElementById('btn-search').disabled = true;
+            document.getElementById('btn-search').textContent = '⏳ กำลังค้นหา...';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ term, size, page: 1, strict })
+                });
+                const data = await res.json();
+                displaySearchResults(data, term);
+            } catch (err) {
+                alert('Error: ' + err.message);
+            } finally {
+                document.getElementById('search-loading').classList.add('hidden');
+                document.getElementById('btn-search').disabled = false;
+                document.getElementById('btn-search').innerHTML = '<span>🔍</span> ค้นหา ThaiJO';
+            }
+        }
+
+        function displaySearchResults(data, term) {
+            const container = document.getElementById('search-result-cards');
+            container.innerHTML = '';
+
+            const count = data.count || 0;
+            const results = data.results || [];
+            document.getElementById('search-result-count').textContent =
+                `พบ ${count} บทความ สำหรับ "${term}"`;
+
+            if (data.error) {
+                container.innerHTML = `
+                    <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm">
+                        ❌ ${data.error}
+                    </div>`;
+                document.getElementById('search-results').classList.remove('hidden');
+                return;
+            }
+
+            if (results.length === 0) {
+                container.innerHTML = `
+                    <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 text-amber-700 text-sm">
+                        ⚠️ ไม่พบบทความ — ลองใช้คำค้นอื่น หรือปิด Strict mode
+                    </div>`;
+                document.getElementById('search-results').classList.remove('hidden');
+                return;
+            }
+
+            results.forEach((article, i) => {
+                const card = document.createElement('div');
+                card.className = 'article-card bg-white rounded-xl border p-5 fade-in';
+                card.style.animationDelay = `${i * 0.1}s`;
+
+                const url = article.pdf_url || '';
+                const urlHtml = url
+                    ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"
+                            class="text-indigo-600 underline text-xs break-all hover:text-indigo-800"
+                            title="${escapeHtml(url)}">${escapeHtml(url)}</a>`
+                    : `<span class="text-gray-400 text-xs">ไม่มี URL</span>`;
+
+                const titleHtml = article.title
+                    ? `<p class="font-semibold text-gray-800 text-sm mb-1">${escapeHtml(article.title)}</p>`
+                    : `<p class="font-semibold text-red-500 text-sm mb-1">[ไม่มีชื่อบทความ]</p>`;
+
+                const metaHtml = [
+                    article.apa_authors ? `<span>👤 ${escapeHtml(article.apa_authors)}</span>` : '',
+                    article.apa_year    ? `<span>📅 ${escapeHtml(article.apa_year)}</span>`    : '',
+                    article.apa_journal ? `<span>📰 ${escapeHtml(article.apa_journal)}</span>` : '',
+                ].filter(Boolean).join('<span class="text-gray-300 mx-1">·</span>');
+
+                const refHtml = article.reference
+                    ? `<div class="mt-3 bg-indigo-50 rounded-lg p-3">
+                         <div class="text-xs font-bold text-indigo-600 mb-1">📖 Reference</div>
+                         <div class="text-xs text-gray-700 italic">${escapeHtml(article.reference)}</div>
+                       </div>`
+                    : '';
+
+                const summaryShort = (article.summary || '').slice(0, 280);
+                const summaryId = 'sum1-' + Math.random().toString(36).slice(2);
+                const summaryHtml = article.summary && article.summary.length > 280
+                    ? `<p class="text-xs text-gray-600 line-clamp-3">${escapeHtml(summaryShort)}…
+                         <button onclick="document.getElementById('${summaryId}').classList.toggle('hidden');this.textContent=this.textContent.includes('▼')?'▲ ย่อ':'▼ ดูเพิ่มเติม'"
+                            class="text-indigo-500 ml-1">▼ ดูเพิ่มเติม</button>
+                         <span id="${summaryId}" class="hidden block mt-1 whitespace-pre-wrap">${escapeHtml(article.summary)}</span>
+                       </p>`
+                    : `<p class="text-xs text-gray-600">${escapeHtml(article.summary || '(ไม่มีสรุป)')}</p>`;
+
+                card.innerHTML = `
+                    <div class="flex items-start gap-3">
+                        <span class="shrink-0 bg-indigo-100 text-indigo-700 text-xs font-bold px-2 py-0.5 rounded mt-0.5">#${i + 1}</span>
+                        <div class="flex-1 min-w-0">
+                            ${titleHtml}
+                            ${metaHtml ? `<div class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500 mb-2">${metaHtml}</div>` : ''}
+                            <div class="mb-2">🔗 ${urlHtml}</div>
+                            ${summaryHtml}
+                            ${refHtml}
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+
+            document.getElementById('search-results').classList.remove('hidden');
+        }
+
+        // ======================== GENERATE REPORT ========================
+        async function generateReport() {
+            const topic = document.getElementById('report-topic').value.trim();
+            if (!topic) { alert('กรุณาใส่หัวข้อวิจัย'); return; }
+
+            const maxArticles = parseInt(document.getElementById('report-max-articles').value);
+            const maxQueries = parseInt(document.getElementById('report-max-queries').value);
+            const minRelevance = parseFloat(document.getElementById('report-min-relevance').value);
+
+            // Reset UI
+            document.getElementById('report-output').classList.add('hidden');
+            document.getElementById('report-progress').classList.remove('hidden');
+            document.getElementById('progress-summary').classList.add('hidden');
+            document.getElementById('btn-report').disabled = true;
+            document.getElementById('btn-report').innerHTML = '⏳ กำลังสร้างรายงาน...';
+            clearCharts();
+
+            const timeline = document.getElementById('progress-timeline');
+            timeline.innerHTML = '';
+
+            // Add initial progress steps
+            const steps = [
+                { name: 'Research Topic Parser', desc: 'วิเคราะห์หัวข้อวิจัย สร้าง search queries' },
+                { name: 'ThaiJO Searcher', desc: 'ค้นหาบทความจาก TCI-THAIJO' },
+                { name: 'Article Screener', desc: 'คัดกรองความเกี่ยวข้อง' },
+                { name: 'Citation Generator', desc: 'สร้าง APA citations' },
+                { name: 'Research Synthesizer', desc: 'สังเคราะห์งานวิจัย' },
+                { name: 'Report Composer', desc: 'เรียบเรียงรายงาน' },
+            ];
+            steps.forEach(step => addProgressStep(step.name, step.desc, 'pending'));
+
+            // Try SSE streaming first, fallback to regular POST
+            try {
+                const requestBody = {
+                    topic,
+                    max_articles: maxArticles,
+                    max_queries: maxQueries,
+                    min_relevance: minRelevance,
+                    session_id: null,
+                    user_id: null
+                };
+
+                // Attempt SSE streaming
+                const sseRes = await fetch(`${API_BASE}/api/thaijo/research/stream`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (sseRes.ok && sseRes.headers.get('content-type')?.includes('text/event-stream')) {
+                    // SSE mode — read events
+                    const reader = sseRes.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = '';
+                    let reportData = null;
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop() || '';
+
+                        for (const line of lines) {
+                            if (!line.startsWith('data: ')) continue;
+                            try {
+                                const evt = JSON.parse(line.slice(6));
+                                if (evt.type === 'agent_progress' || evt.type === 'search_progress' || evt.type === 'screening') {
+                                    const d = evt.data;
+                                    if (d && d.agent_name) {
+                                        updateProgressStep(d.agent_name, d.status === 'done' ? 'done' : d.status === 'error' ? 'error' : 'active');
+                                    }
+                                } else if (evt.type === 'content') {
+                                    reportData = evt.data;
+                                } else if (evt.type === 'error') {
+                                    throw new Error(evt.message);
+                                }
+                            } catch (parseErr) { /* skip malformed */ }
+                        }
+                    }
+
+                    if (reportData) {
+                        steps.forEach(step => updateProgressStep(step.name, 'done'));
+                        showProgressSummary(reportData);
+                        displayReport(reportData);
+                    }
+                } else {
+                    // Fallback to regular POST
+                    const res = await fetch(`${API_BASE}/api/thaijo/research`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    if (!res.ok) {
+                        const errText = await res.text();
+                        throw new Error(`HTTP ${res.status}: ${errText}`);
+                    }
+
+                    const data = await res.json();
+                    steps.forEach(step => updateProgressStep(step.name, 'done'));
+                    showProgressSummary(data);
+                    displayReport(data);
+                }
+            } catch (err) {
+                if (err.message.includes('404') || err.message.includes('405')) {
+                    await simulateReportFromSearch(topic, maxArticles);
+                } else {
+                    addProgressStep('Error', err.message, 'error');
+                    alert('Error generating report: ' + err.message);
+                }
+            } finally {
+                document.getElementById('btn-report').disabled = false;
+                document.getElementById('btn-report').innerHTML = '<span>📝</span> สร้างรายงานวิจัย';
+            }
+        }
+
+        // Fallback: simulate report by searching ThaiJO and building a simple report
+        async function simulateReportFromSearch(topic, maxArticles) {
+            updateProgressStep('Research Topic Parser', 'active');
+
+            // Generate queries from topic (simple split)
+            const words = topic.split(/\s+/).filter(w => w.length > 1);
+            const queries = [];
+            if (words.length >= 2) queries.push(words.slice(0, 3).join(' '));
+            if (words.length >= 4) queries.push(words.slice(2, 5).join(' '));
+            queries.push(topic.substring(0, 50));
+            updateProgressStep('Research Topic Parser', 'done');
+
+            // Search ThaiJO
+            updateProgressStep('ThaiJO Searcher', 'active');
+            const allArticles = [];
+            for (const q of queries.slice(0, 3)) {
+                try {
+                    const res = await fetch(`${API_BASE}/api/thaijo/search`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ term: q, size: 5, page: 1, strict: true })
+                    });
+                    const data = await res.json();
+                    if (data.results) {
+                        data.results.forEach(r => {
+                            r._query = q;
+                            if (!allArticles.find(a => a.pdf_url === r.pdf_url)) {
+                                allArticles.push(r);
+                            }
+                        });
+                    }
+                } catch (e) { /* skip failed query */ }
+            }
+            updateProgressStep('ThaiJO Searcher', 'done');
+
+            // Screen articles (simple: take all)
+            updateProgressStep('Article Screener', 'active');
+            const selected = allArticles.slice(0, maxArticles);
+            updateProgressStep('Article Screener', 'done');
+
+            // Generate citations
+            updateProgressStep('Citation Generator', 'active');
+            const citations = selected.map((a, i) => ({
+                citation_code: `C-${200 + i}`,
+                source_type: 'thaijo_article',
+                source_ref: a.pdf_url,
+                citation_text: a.reference ? a.reference.substring(0, 80) + '...' : `[ThaiJO Article #${i + 1}]`,
+                open_url: a.pdf_url,
+                bibliography_text: a.reference || `[ไม่ระบุผู้แต่ง]. (ไม่ระบุปี). ThaiJO. ${a.pdf_url}`
+            }));
+            updateProgressStep('Citation Generator', 'done');
+
+            // Build report markdown
+            updateProgressStep('Research Synthesizer', 'active');
+            await sleep(500);
+            updateProgressStep('Research Synthesizer', 'done');
+
+            updateProgressStep('Report Composer', 'active');
+
+            let md = `## การทบทวนวรรณกรรม: ${topic}\n\n`;
+            md += `### บทคัดย่อ\n`;
+            md += `การทบทวนวรรณกรรมครั้งนี้สืบค้นจากฐานข้อมูล TCI-THAIJO พบบทความที่เกี่ยวข้อง ${allArticles.length} ชิ้น คัดเลือก ${selected.length} ชิ้นสำหรับการวิเคราะห์\n\n`;
+            md += `### 1. วิธีการสืบค้น\n`;
+            md += `- **แหล่งข้อมูล**: TCI-THAIJO (Thai Journals Online)\n`;
+            md += `- **คำค้น**: ${queries.map(q => `"${q}"`).join(', ')}\n`;
+            md += `- **จำนวนบทความที่พบ**: ${allArticles.length} ชิ้น\n`;
+            md += `- **จำนวนที่คัดเลือก**: ${selected.length} ชิ้น\n\n`;
+            md += `### 2. สรุปบทความที่ทบทวน\n\n`;
+
+            selected.forEach((a, i) => {
+                const code = `C-${200 + i}`;
+                const snippet = (a.summary || '').substring(0, 200);
+                md += `**[${code}]** ${snippet}...\n\n`;
+            });
+
+            md += `### 3. ข้อค้นพบหลัก\n`;
+            md += `จากการทบทวนบทความ ${selected.length} ชิ้น ข้อค้นพบที่สำคัญมีดังนี้:\n\n`;
+            md += `> ⚠️ **หมายเหตุ**: รายงานนี้สร้างจาก ThaiJO Search API โดยตรง (Fallback mode)\n`;
+            md += `> เมื่อ /api/thaijo/research endpoint พร้อมใช้งาน รายงานจะมี thematic analysis, contradiction analysis, research gaps และรายละเอียดเพิ่มเติม\n\n`;
+
+            md += `### เอกสารอ้างอิง\n\n`;
+            citations.forEach(c => {
+                md += `[${c.citation_code}] ${c.bibliography_text}\n\n`;
+            });
+
+            updateProgressStep('Report Composer', 'done');
+
+            // Build response object
+            const response = {
+                content: md,
+                topic: topic,
+                articles_found: allArticles.length,
+                articles_selected: selected.length,
+                charts: [],
+                tables: [{
+                    title: 'สรุปบทความที่ทบทวน',
+                    headers: ['#', 'Citation', 'สรุปเนื้อหา', 'APA', 'Link'],
+                    rows: selected.map((a, i) => [
+                        `${i + 1}`,
+                        `C-${200 + i}`,
+                        (a.summary || '').substring(0, 100) + '...',
+                        a.reference ? '✅' : '⚠️',
+                        `[PDF](${a.pdf_url})`
+                    ])
+                }],
+                citations: citations,
+                follow_ups: [
+                    `งานวิจัยในอนาคตควรศึกษาประเด็นใดเพิ่มเติมเกี่ยวกับ ${topic}?`,
+                    `มีงานวิจัยเชิงคุณภาพเกี่ยวกับ ${topic} มากน้อยเพียงใด?`,
+                    `ผลการศึกษาในบริบทไทยแตกต่างจากต่างประเทศอย่างไร?`
+                ],
+                metadata: {
+                    elapsed_seconds: 0,
+                    pipeline: 'thaijo_research_fallback',
+                    search_queries: queries.length,
+                    articles_found: allArticles.length,
+                    articles_selected: selected.length,
+                    mode: 'fallback (direct search)'
+                }
+            };
+
+            showProgressSummary(response);
+            displayReport(response);
+        }
+
+        // ======================== DISPLAY REPORT ========================
+        function displayReport(data) {
+            // Content
+            if (data.content) {
+                document.getElementById('report-content').innerHTML = marked.parse(data.content);
+            }
+
+            // Charts
+            if (data.charts && data.charts.length > 0) {
+                document.getElementById('report-charts').classList.remove('hidden');
+                const container = document.getElementById('chart-container');
+                container.innerHTML = '';
+                data.charts.forEach((spec, i) => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-white rounded-xl border p-4 shadow-sm';
+                    card.innerHTML = `
+                        <h4 class="text-sm font-bold text-gray-700 mb-2">${escapeHtml(spec.title)}</h4>
+                        <canvas id="chart-${i}" height="250"></canvas>
+                        ${spec.source_note ? `<p class="text-xs text-gray-400 mt-2">${escapeHtml(spec.source_note)}</p>` : ''}
+                    `;
+                    container.appendChild(card);
+                    try {
+                        const ctx = document.getElementById(`chart-${i}`).getContext('2d');
+                        const instance = new Chart(ctx, { type: spec.type, data: spec.data, options: spec.options || {} });
+                        chartInstances.push(instance);
+                    } catch (e) { console.error('Chart error:', e); }
+                });
+            }
+
+            // Tables
+            if (data.tables && data.tables.length > 0) {
+                document.getElementById('report-tables').classList.remove('hidden');
+                const container = document.getElementById('table-container');
+                container.innerHTML = '';
+                data.tables.forEach(tbl => {
+                    let html = `<table class="w-full text-sm border-collapse mb-4">`;
+                    html += `<thead><tr class="bg-gray-50">`;
+                    tbl.headers.forEach(h => { html += `<th class="px-3 py-2 text-left border font-medium text-gray-600">${escapeHtml(h)}</th>`; });
+                    html += `</tr></thead><tbody>`;
+                    tbl.rows.forEach(row => {
+                        html += `<tr class="hover:bg-gray-50">`;
+                        row.forEach(cell => { html += `<td class="px-3 py-2 border text-gray-700">${escapeHtml(cell)}</td>`; });
+                        html += `</tr>`;
+                    });
+                    html += `</tbody></table>`;
+                    container.innerHTML += html;
+                });
+            }
+
+            // Citations
+            if (data.citations && data.citations.length > 0) {
+                document.getElementById('report-citations').classList.remove('hidden');
+                const list = document.getElementById('citations-list');
+                list.innerHTML = '';
+                data.citations.forEach(c => {
+                    const div = document.createElement('div');
+                    div.className = 'border-l-4 border-indigo-400 pl-4 py-2 fade-in';
+                    div.innerHTML = `
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="citation-tag" onclick="window.open('${c.open_url}','_blank')">${c.citation_code}</span>
+                            <span class="text-xs text-gray-400">${c.source_type}</span>
+                        </div>
+                        <p class="text-sm text-gray-700 italic">${escapeHtml(c.bibliography_text)}</p>
+                        <a href="${c.open_url}" target="_blank" class="text-xs text-indigo-600 hover:underline mt-1 inline-block">📄 เปิดบทความ →</a>
+                    `;
+                    list.appendChild(div);
+                });
+            }
+
+            // Follow-ups
+            if (data.follow_ups && data.follow_ups.length > 0) {
+                document.getElementById('report-followups').classList.remove('hidden');
+                const list = document.getElementById('followups-list');
+                list.innerHTML = '';
+                data.follow_ups.forEach((q, i) => {
+                    const div = document.createElement('div');
+                    div.className = 'bg-indigo-50 rounded-lg p-3 cursor-pointer hover:bg-indigo-100 transition';
+                    div.innerHTML = `<span class="text-indigo-600 font-bold mr-2">${i + 1}.</span><span class="text-sm text-gray-700">${escapeHtml(q)}</span>`;
+                    div.onclick = () => {
+                        document.getElementById('report-topic').value = q;
+                        switchTab('report');
+                    };
+                    list.appendChild(div);
+                });
+            }
+
+            // Raw JSON
+            document.getElementById('report-raw-json').textContent = JSON.stringify(data, null, 2);
+
+            document.getElementById('report-output').classList.remove('hidden');
+        }
+
+        // ======================== PROGRESS HELPERS ========================
+        function addProgressStep(name, desc, status) {
+            const timeline = document.getElementById('progress-timeline');
+            const div = document.createElement('div');
+            div.id = `progress-${name.replace(/\s+/g, '-')}`;
+            div.className = `progress-step ${status} border-l-4 pl-4 py-2 transition-all`;
+
+            const statusIcon = status === 'done' ? '✅' : status === 'active' ? '⏳' : status === 'error' ? '❌' : '⏸️';
+            div.innerHTML = `
+                <div class="flex items-center gap-2">
+                    <span class="text-sm">${statusIcon}</span>
+                    <span class="text-sm font-medium text-gray-800">${name}</span>
+                    ${status === 'active' ? '<span class="pulse-dot inline-block w-2 h-2 bg-indigo-500 rounded-full ml-1"></span>' : ''}
+                </div>
+                <p class="text-xs text-gray-500 ml-6">${desc}</p>
+            `;
+            timeline.appendChild(div);
+        }
+
+        function updateProgressStep(name, status) {
+            const id = `progress-${name.replace(/\s+/g, '-')}`;
+            const el = document.getElementById(id);
+            if (!el) return;
+
+            el.className = `progress-step ${status} border-l-4 pl-4 py-2 transition-all`;
+            const statusIcon = status === 'done' ? '✅' : status === 'active' ? '⏳' : status === 'error' ? '❌' : '⏸️';
+            const nameEl = el.querySelector('.font-medium');
+            if (nameEl) nameEl.previousElementSibling.textContent = statusIcon;
+
+            // Remove pulse dot if done
+            const pulse = el.querySelector('.pulse-dot');
+            if (pulse && status !== 'active') pulse.remove();
+        }
+
+        function showProgressSummary(data) {
+            document.getElementById('progress-summary').classList.remove('hidden');
+            document.getElementById('stat-queries').textContent = data.metadata?.search_queries || '—';
+            document.getElementById('stat-found').textContent = data.articles_found || data.metadata?.articles_found || '—';
+            document.getElementById('stat-selected').textContent = data.articles_selected || data.metadata?.articles_selected || '—';
+            document.getElementById('stat-time').textContent = data.metadata?.elapsed_seconds
+                ? data.metadata.elapsed_seconds.toFixed(1) : '—';
+        }
+
+        // ======================== STATUS CHECKS ========================
+        async function checkThaiJOStatus() {
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/status`);
+                const data = await res.json();
+
+                document.getElementById('status-result').classList.remove('hidden');
+                const cards = document.getElementById('status-cards');
+                cards.innerHTML = `
+                    <div class="bg-white border rounded-lg p-4">
+                        <div class="text-sm font-bold text-gray-700 mb-3">ThaiJO Service</div>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between"><span class="text-gray-500">Enabled</span><span class="${data.enabled ? 'text-green-600' : 'text-red-600'} font-medium">${data.enabled ? '✅ Yes' : '❌ No'}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">API URL</span><span class="font-mono text-xs text-gray-700">${data.api_url || '—'}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Timeout</span><span class="text-gray-700">${data.timeout_seconds || '—'}s</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Default Size</span><span class="text-gray-700">${data.default_size || '—'}</span></div>
+                            <div class="flex justify-between"><span class="text-gray-500">Max Size</span><span class="text-gray-700">${data.max_size || '—'}</span></div>
+                        </div>
+                    </div>
+                    <div class="bg-white border rounded-lg p-4">
+                        <div class="text-sm font-bold text-gray-700 mb-3">Connection Test</div>
+                        <button onclick="testThaiJOConnection()" class="w-full bg-indigo-100 text-indigo-700 py-2 rounded-lg text-sm font-medium hover:bg-indigo-200 transition">
+                            🔌 ทดสอบการเชื่อมต่อ
+                        </button>
+                        <div id="connection-test-result" class="mt-3 text-sm"></div>
+                    </div>
+                `;
+            } catch (err) {
+                document.getElementById('status-result').classList.remove('hidden');
+                document.getElementById('status-cards').innerHTML = `
+                    <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm col-span-2">
+                        ❌ ไม่สามารถเชื่อมต่อ Agent Backend: ${err.message}
+                    </div>`;
+            }
+        }
+
+        async function testThaiJOConnection() {
+            const el = document.getElementById('connection-test-result');
+            el.innerHTML = '<span class="text-gray-500">⏳ กำลังทดสอบ...</span>';
+            try {
+                const start = Date.now();
+                const res = await fetch(`${API_BASE}/api/thaijo/search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ term: 'สุขภาพ', size: 1, page: 1, strict: true })
+                });
+                const data = await res.json();
+                const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+
+                if (data.error) {
+                    el.innerHTML = `<span class="text-red-600">❌ ${data.error} (${elapsed}s)</span>`;
+                } else {
+                    el.innerHTML = `<span class="text-green-600">✅ เชื่อมต่อสำเร็จ (${elapsed}s, ${data.count} results)</span>`;
+                }
+            } catch (err) {
+                el.innerHTML = `<span class="text-red-600">❌ ${err.message}</span>`;
+            }
+        }
+
+        async function checkAgentHealth() {
+            try {
+                const res = await fetch(`${API_BASE}/api/health`);
+                const data = await res.json();
+                const el = document.getElementById('agent-health-result');
+                el.classList.remove('hidden');
+
+                let html = '<div class="grid grid-cols-1 md:grid-cols-3 gap-3">';
+                const services = [
+                    { name: 'PostgreSQL', key: 'postgresql' },
+                    { name: 'MinIO', key: 'minio' },
+                    { name: 'pgvector', key: 'pgvector' }
+                ];
+                services.forEach(svc => {
+                    const status = data[svc.key]?.status || data[svc.key] || 'unknown';
+                    const ok = status === 'connected' || status === 'ok' || status === true;
+                    html += `
+                        <div class="bg-white border rounded-lg p-3 flex items-center gap-3">
+                            <span class="text-lg">${ok ? '✅' : '❌'}</span>
+                            <div>
+                                <div class="text-sm font-medium text-gray-800">${svc.name}</div>
+                                <div class="text-xs text-gray-500">${status}</div>
+                            </div>
+                        </div>`;
+                });
+                html += '</div>';
+                el.innerHTML = html;
+            } catch (err) {
+                const el = document.getElementById('agent-health-result');
+                el.classList.remove('hidden');
+                el.innerHTML = `<div class="bg-red-50 text-red-700 rounded-lg p-3 text-sm">❌ ${err.message}</div>`;
+            }
+        }
+
+        // ======================== CACHE INSPECTOR ========================
+        let cacheData = [];
+        let cachePage = 1;
+        const CACHE_PAGE_SIZE = 20;
+        let cacheSelectedKey = null;
+
+        async function syncEvidenceRegistry() {
+            const btn = document.getElementById('btn-cache-sync');
+            const banner = document.getElementById('sync-evidence-result');
+            btn.disabled = true;
+            btn.textContent = '⏳ กำลัง Sync...';
+            banner.classList.add('hidden');
+
+            try {
+                const resp = await fetch(`${API_BASE}/api/thaijo/sync-evidence`, { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` }));
+                    throw new Error(err.detail || `HTTP ${resp.status}`);
+                }
+                const data = await resp.json();
+                const hasErrors = data.errors > 0;
+                banner.className = `mb-4 p-3 rounded-lg border text-sm ${hasErrors ? 'bg-yellow-50 border-yellow-300 text-yellow-800' : 'bg-green-50 border-green-300 text-green-800'}`;
+                banner.innerHTML = `
+                    <strong>🔗 Sync Evidence Registry เสร็จสิ้น</strong><br>
+                    ✅ อัปเดต URL: <strong>${data.synced}</strong> &nbsp;
+                    🗑️ ล้าง URL: <strong>${data.cleared}</strong> &nbsp;
+                    ⏸️ ไม่เปลี่ยน: <strong>${data.unchanged}</strong>
+                    ${data.errors > 0 ? ` &nbsp; ⚠️ errors: <strong>${data.errors}</strong>` : ''}
+                `;
+                banner.classList.remove('hidden');
+            } catch (err) {
+                banner.className = 'mb-4 p-3 rounded-lg border text-sm bg-red-50 border-red-300 text-red-800';
+                banner.innerHTML = `❌ Sync ล้มเหลว: ${escapeHtml(err.message)}`;
+                banner.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔗 Sync Evidence';
+            }
+        }
+
+        async function loadCache() {
+            document.getElementById('cache-loading').classList.remove('hidden');
+            document.getElementById('cache-table-wrapper').classList.add('hidden');
+            document.getElementById('cache-empty').classList.add('hidden');
+            document.getElementById('cache-pagination').classList.add('hidden');
+            document.getElementById('cache-detail-panel').classList.add('hidden');
+
+            try {
+                const statsRes = await fetch(`${API_BASE}/api/thaijo/cache/stats`);
+                const stats = await statsRes.json();
+                document.getElementById('cache-total-keys').textContent = stats.total_keys;
+                document.getElementById('cache-total-size').textContent = formatBytes(stats.total_size_bytes);
+                document.getElementById('cache-redis-status').textContent = stats.redis_connected ? '✅ Connected' : '❌ Offline';
+
+                const entriesRes = await fetch(`${API_BASE}/api/thaijo/cache`);
+                if (!entriesRes.ok) throw new Error(`HTTP ${entriesRes.status}`);
+                cacheData = await entriesRes.json();
+                cachePage = 1;
+                renderCacheTable();
+            } catch (err) {
+                document.getElementById('cache-empty').classList.remove('hidden');
+                document.getElementById('cache-empty').innerHTML = `❌ ไม่สามารถโหลด Cache: ${escapeHtml(err.message)}`;
+            } finally {
+                document.getElementById('cache-loading').classList.add('hidden');
+            }
+        }
+
+        function renderCacheTable() {
+            const filter = document.getElementById('cache-filter').value.toLowerCase();
+            const filtered = filter
+                ? cacheData.filter(e => e.preview.toLowerCase().includes(filter))
+                : cacheData;
+
+            document.getElementById('cache-filter-count').textContent =
+                filter ? `${filtered.length}/${cacheData.length} รายการ` : '';
+
+            if (filtered.length === 0) {
+                document.getElementById('cache-empty').classList.remove('hidden');
+                document.getElementById('cache-empty').innerHTML = filter
+                    ? `📭 ไม่พบรายการที่ตรงกับ "${escapeHtml(filter)}"`
+                    : '📭 ไม่มีข้อมูลใน Cache';
+                document.getElementById('cache-table-wrapper').classList.add('hidden');
+                document.getElementById('cache-pagination').classList.add('hidden');
+                return;
+            }
+
+            const totalPages = Math.ceil(filtered.length / CACHE_PAGE_SIZE);
+            cachePage = Math.min(cachePage, totalPages);
+            const start = (cachePage - 1) * CACHE_PAGE_SIZE;
+            const pageItems = filtered.slice(start, start + CACHE_PAGE_SIZE);
+
+            const tbody = document.getElementById('cache-tbody');
+            tbody.innerHTML = '';
+
+            pageItems.forEach((entry, i) => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-50 cursor-pointer';
+                const shortKey = entry.key.replace('pdf_cache:', '').substring(0, 12) + '...';
+                tr.innerHTML = `
+                    <td class="px-4 py-2 text-gray-500">${start + i + 1}</td>
+                    <td class="px-4 py-2 font-mono text-xs text-gray-600" title="${escapeHtml(entry.key)}">${shortKey}</td>
+                    <td class="px-4 py-2 text-gray-700 max-w-md truncate">${escapeHtml(entry.preview)}</td>
+                    <td class="px-4 py-2 text-gray-500 whitespace-nowrap">${formatBytes(entry.size)}</td>
+                    <td class="px-4 py-2 whitespace-nowrap">
+                        <button onclick="event.stopPropagation(); viewCacheEntry('${escapeHtml(entry.key)}')" class="text-indigo-600 hover:text-indigo-800 text-xs mr-2">👁️ ดู</button>
+                        <button onclick="event.stopPropagation(); deleteSingleCache('${escapeHtml(entry.key)}')" class="text-red-600 hover:text-red-800 text-xs mr-2">🗑️ ลบ</button>
+                        ${(()=>{ const u=extractUrlFromText(entry.preview); return u ? `<a href="${escapeHtml(u)}" target="_blank" rel="noopener" onclick="event.stopPropagation()" class="text-green-600 hover:text-green-800 text-xs" title="${escapeHtml(u)}">🔗</a>` : ''; })()}
+                    </td>
+                `;
+                tr.onclick = () => viewCacheEntry(entry.key);
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('cache-empty').classList.add('hidden');
+            document.getElementById('cache-table-wrapper').classList.remove('hidden');
+
+            if (totalPages > 1) {
+                document.getElementById('cache-pagination').classList.remove('hidden');
+                document.getElementById('cache-page-info').textContent = `หน้า ${cachePage}/${totalPages}`;
+                document.getElementById('btn-cache-prev').disabled = cachePage <= 1;
+                document.getElementById('btn-cache-next').disabled = cachePage >= totalPages;
+            } else {
+                document.getElementById('cache-pagination').classList.add('hidden');
+            }
+        }
+
+        function filterCache() { cachePage = 1; renderCacheTable(); }
+        function cachePrevPage() { if (cachePage > 1) { cachePage--; renderCacheTable(); } }
+        function cacheNextPage() { cachePage++; renderCacheTable(); }
+
+        async function viewCacheEntry(key) {
+            cacheSelectedKey = key;
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/cache/${encodeURIComponent(key)}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                document.getElementById('cache-detail-key').textContent = data.key;
+                // T5: linkify ThaiJO URLs in full summary
+                document.getElementById('cache-detail-summary').innerHTML = linkifySummary(data.summary || '');
+                document.getElementById('cache-detail-panel').classList.remove('hidden');
+                document.getElementById('cache-detail-panel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            } catch (err) {
+                alert('ไม่สามารถโหลดสรุป: ' + err.message);
+            }
+        }
+
+        function closeCacheDetail() {
+            document.getElementById('cache-detail-panel').classList.add('hidden');
+            cacheSelectedKey = null;
+        }
+
+        function copyCacheSummary() {
+            // use innerText to get plain text even though summary is now linkified HTML
+            const text = document.getElementById('cache-detail-summary').innerText;
+            navigator.clipboard.writeText(text).then(() => alert('คัดลอกสรุปแล้ว!'));
+        }
+
+        async function deleteSingleCache(key) {
+            if (!confirm('ต้องการลบรายการนี้จาก Cache?')) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/cache/${encodeURIComponent(key)}`, { method: 'DELETE' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                if (cacheSelectedKey === key) closeCacheDetail();
+                await loadCache();
+            } catch (err) {
+                alert('ลบไม่สำเร็จ: ' + err.message);
+            }
+        }
+
+        async function deleteCacheEntry() {
+            if (!cacheSelectedKey) return;
+            await deleteSingleCache(cacheSelectedKey);
+        }
+
+        async function clearAllCache() {
+            if (!confirm('⚠️ ต้องการล้าง Cache ทั้งหมด? การดำเนินการนี้ไม่สามารถย้อนกลับได้')) return;
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/cache`, { method: 'DELETE' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                alert(`ล้าง Cache เรียบร้อย: ${data.total_cleared} รายการ`);
+                closeCacheDetail();
+                await loadCache();
+            } catch (err) {
+                alert('ล้าง Cache ไม่สำเร็จ: ' + err.message);
+            }
+        }
+
+        async function syncEvidenceRegistry() {
+            const btn = document.getElementById('btn-cache-sync');
+            const banner = document.getElementById('sync-evidence-result');
+            btn.disabled = true;
+            btn.innerHTML = '⏳ กำลัง Sync...';
+            banner.style.display = 'none';
+            banner.classList.add('hidden');
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/sync-evidence`, { method: 'POST' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const errPart = data.errors > 0
+                    ? ` <span class="text-red-600 font-bold">${data.errors} errors</span>` : '';
+                banner.innerHTML = `
+                    <span class="font-medium text-amber-800">🔗 Sync Evidence Registry เสร็จสิ้น:</span>
+                    <span class="ml-2"><strong class="text-green-700">${data.synced}</strong> อัปเดต</span>
+                    <span class="mx-1 text-gray-400">|</span>
+                    <span><strong class="text-red-700">${data.cleared}</strong> ล้าง URL</span>
+                    <span class="mx-1 text-gray-400">|</span>
+                    <span><strong class="text-gray-700">${data.unchanged}</strong> ไม่เปลี่ยน</span>${errPart}`;
+                banner.className = 'mb-4 p-3 rounded-lg border text-sm bg-amber-50 border-amber-200';
+                banner.style.display = '';
+            } catch (err) {
+                banner.innerHTML = `❌ Sync ไม่สำเร็จ: ${escapeHtml(err.message)}`;
+                banner.className = 'mb-4 p-3 rounded-lg border text-sm bg-red-50 border-red-200 text-red-700';
+                banner.style.display = '';
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🔗 Sync Evidence';
+            }
+        }
+
+        async function loadEvidenceDebug(badOnly = false) {
+            const tbody = document.getElementById('evidence-debug-tbody');
+            const tbl = document.getElementById('evidence-debug-table');
+            const stats = document.getElementById('evidence-debug-stats');
+            const empty = document.getElementById('evidence-debug-empty');
+            tbody.innerHTML = '<tr><td colspan="5" class="px-3 py-4 text-center text-gray-400 text-xs">กำลังโหลด...</td></tr>';
+            tbl.classList.remove('hidden');
+            stats.classList.add('hidden');
+            empty.classList.add('hidden');
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/evidence?bad_only=${badOnly}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                document.getElementById('ev-total').textContent = data.total;
+                document.getElementById('ev-bad').textContent = data.bad_url_count;
+                stats.classList.remove('hidden');
+                if (!data.rows || data.rows.length === 0) {
+                    tbl.classList.add('hidden');
+                    empty.classList.remove('hidden');
+                    return;
+                }
+                tbody.innerHTML = data.rows.map(r => {
+                    const statusBadge = r.url_ok
+                        ? '<span class="bg-green-100 text-green-700 px-1.5 py-0.5 rounded text-xs">✅ OK</span>'
+                        : r.is_download_url
+                            ? '<span class="bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded text-xs">⬇️ Download</span>'
+                            : '<span class="bg-red-100 text-red-700 px-1.5 py-0.5 rounded text-xs">❌ Invalid</span>';
+                    const ouDisplay = r.open_url
+                        ? `<a href="${escapeHtml(r.open_url)}" target="_blank" class="text-blue-600 hover:underline font-mono">${escapeHtml(r.open_url.slice(-40))}</a>`
+                        : '<span class="text-gray-300 italic">ว่าง</span>';
+                    const srDisplay = r.source_ref
+                        ? `<span class="font-mono text-gray-500">${escapeHtml(r.source_ref.slice(-40))}</span>`
+                        : '<span class="text-gray-300 italic">ว่าง</span>';
+                    return `<tr class="${r.url_ok ? '' : 'bg-red-50'}">
+                        <td class="px-3 py-2 font-mono text-gray-700">${escapeHtml(r.evidence_id)}</td>
+                        <td class="px-3 py-2 text-gray-600 max-w-xs truncate">${escapeHtml((r.title || '').slice(0, 50))}</td>
+                        <td class="px-3 py-2">${ouDisplay}</td>
+                        <td class="px-3 py-2">${srDisplay}</td>
+                        <td class="px-3 py-2 text-center">${statusBadge}</td>
+                    </tr>`;
+                }).join('');
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="5" class="px-3 py-4 text-center text-red-500 text-xs">❌ โหลดไม่สำเร็จ: ${escapeHtml(err.message)}</td></tr>`;
+            }
+        }
+
+        async function fixEvidenceUrls() {
+            const btn = document.getElementById('btn-fix-evidence');
+            const banner = document.getElementById('evidence-fix-result');
+            btn.disabled = true;
+            btn.innerHTML = '⏳ กำลัง Fix...';
+            banner.classList.add('hidden');
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/fix-evidence-urls`, { method: 'POST' });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                banner.innerHTML = `✅ Fix เสร็จสิ้น: <strong class="text-green-700">${data.fixed}</strong> แก้แล้ว &nbsp;|&nbsp; <strong class="text-gray-600">${data.already_ok}</strong> ถูกต้องอยู่แล้ว` +
+                    (data.errors > 0 ? ` &nbsp;|&nbsp; <strong class="text-red-600">${data.errors}</strong> error` : '');
+                banner.className = 'mb-3 p-3 rounded-lg border text-sm bg-green-50 border-green-200 text-green-800';
+                banner.classList.remove('hidden');
+                // Reload table after fix
+                if (data.fixed > 0) await loadEvidenceDebug(false);
+            } catch (err) {
+                banner.innerHTML = `❌ Fix ไม่สำเร็จ: ${escapeHtml(err.message)}`;
+                banner.className = 'mb-3 p-3 rounded-lg border text-sm bg-red-50 border-red-200 text-red-700';
+                banner.classList.remove('hidden');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🔧 Fix Download URLs';
+            }
+        }
+
+        async function exportCache() {
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/cache`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const entries = await res.json();
+                // Fetch full summaries for all entries
+                const fullEntries = [];
+                for (const entry of entries) {
+                    try {
+                        const detailRes = await fetch(`${API_BASE}/api/thaijo/cache/${encodeURIComponent(entry.key)}`);
+                        if (detailRes.ok) {
+                            const detail = await detailRes.json();
+                            fullEntries.push({ key: detail.key, summary: detail.summary, size: detail.size });
+                        }
+                    } catch (_) { /* skip failed */ }
+                }
+                const blob = new Blob([JSON.stringify(fullEntries, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `thaijo_cache_${new Date().toISOString().slice(0,10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                alert('Export ไม่สำเร็จ: ' + err.message);
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        // ======================== UTILS ========================
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function clearCharts() {
+            chartInstances.forEach(c => c.destroy());
+            chartInstances = [];
+        }
+
+        function copyReport() {
+            const content = document.getElementById('report-content').innerText;
+            navigator.clipboard.writeText(content).then(() => {
+                alert('คัดลอกรายงานแล้ว!');
+            });
+        }
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        // ======================== T5: CACHE TAB URL LINKIFICATION ========================
+
+        const THAIJO_URL_RE = /(https?:\/\/[a-z0-9]+\.tci-thaijo\.org\/index\.php\/[^\s<>"]+\/article\/view\/[\d/]+)/g;
+        const THAIJO_URL_TEST = /^https?:\/\/[a-z0-9]+\.tci-thaijo\.org\/index\.php\/[^\s<>"]+\/article\/view\/[\d/]+$/;
+
+        function linkifySummary(text) {
+            // Split on raw URLs first (before escaping) so HTML-escaping doesn't break the regex.
+            // Use a separate non-g regex for .test() to avoid stateful lastIndex issues.
+            const parts = text.split(THAIJO_URL_RE);
+            return parts.map(part =>
+                THAIJO_URL_TEST.test(part)
+                    ? `<a href="${escapeHtml(part)}" target="_blank" rel="noopener"
+                        class="text-indigo-600 underline hover:text-indigo-800 break-all">${escapeHtml(part)}</a>`
+                    : escapeHtml(part)
+            ).join('');
+        }
+
+        function extractUrlFromText(text) {
+            const m = (text || '').match(THAIJO_URL_RE);
+            return m ? m[0] : null;
+        }
+
+        // ======================== T4: AGENT TEST JS ========================
+
+        // Shared: resolve best clickable article PAGE URL from an article object
+        function extractBestUrl(article) {
+            // Priority 1: article_url = /article/view/ID (clean article page link)
+            if (article.article_url) return article.article_url;
+            // Priority 2: pdf_url if it's a /view/ link (old cache format)
+            if (article.pdf_url && article.pdf_url.includes('/article/view/')) return article.pdf_url;
+            // Priority 3: derive view URL from download URL
+            if (article.pdf_url && article.pdf_url.includes('/article/download/')) {
+                const m = article.pdf_url.match(/(\/index\.php\/[^\/]+)\/article\/download\/(\d+)/);
+                if (m) return article.pdf_url.replace(/\/article\/download\/(\d+)\/\d+/, '/article/view/$1');
+            }
+            return article.pdf_url || null;
+        }
+
+        // Shared: render one article card for Agent Test tab
+        // registryStatus: null (unknown) | 'ok' | 'missing' | 'unverified'
+        function renderAgentArticleCard(article, sourceQuery, cacheHit, registryStatus) {
+            const url = extractBestUrl(article);
+            const urlHtml = url
+                ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener"
+                        class="text-indigo-600 underline text-xs break-all hover:text-indigo-800"
+                        title="${escapeHtml(url)}">${escapeHtml(url)}</a>`
+                : `<span class="text-gray-400 text-xs">ไม่มี URL</span>`;
+
+            const titleHtml = article.title
+                ? `<span class="font-semibold text-gray-800">${escapeHtml(article.title)}</span>`
+                : `<span class="font-semibold text-red-500">[ไม่มีชื่อบทความ — regression!]</span>`;
+
+            const cacheBadge = cacheHit
+                ? `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">🟢 CACHE HIT</span>`
+                : `<span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">🔵 API CALL</span>`;
+
+            const regBadge = registryStatus === 'ok'
+                ? `<span class="text-xs bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded-full" title="registered in evidence_registry, URL verified">✅ registered</span>`
+                : registryStatus === 'missing'
+                ? `<span class="text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full" title="registered but URL is empty">⚠️ URL missing</span>`
+                : registryStatus === 'unverified'
+                ? `<span class="text-xs bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 rounded-full" title="registered but URL not in cache">❌ URL not in cache</span>`
+                : registryStatus === 'not_registered'
+                ? `<span class="text-xs bg-gray-50 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-full" title="not yet in evidence_registry">🟡 not registered</span>`
+                : '';
+
+            const sourceHtml = sourceQuery
+                ? `<span class="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">${escapeHtml(sourceQuery)}</span>`
+                : '';
+
+            const summaryShort = (article.summary || '').slice(0, 280);
+            const summaryId = 'sum-' + Math.random().toString(36).slice(2);
+
+            // PDF download button (only if pdf_url is a /download/ link — actual PDF)
+            const pdfUrl = article.pdf_url || '';
+            const pdfBtnHtml = pdfUrl && pdfUrl.includes('/article/download/')
+                ? `<a href="${escapeHtml(pdfUrl)}" target="_blank" rel="noopener"
+                        class="shrink-0 bg-red-600 text-white text-xs px-2 py-1 rounded hover:bg-red-700 transition"
+                        title="ดาวน์โหลด PDF: ${escapeHtml(pdfUrl)}">📄 PDF</a>`
+                : '';
+
+            return `
+            <div class="article-card border rounded-xl p-4 bg-gray-50 fade-in">
+                <div class="flex items-start justify-between gap-2 mb-2">
+                    <div class="flex-1">${titleHtml}</div>
+                    <div class="flex items-center gap-1 flex-shrink-0">${cacheBadge}${regBadge ? ' ' + regBadge : ''}</div>
+                </div>
+                <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 mb-2">
+                    ${article.apa_authors ? `<span>👤 ${escapeHtml(article.apa_authors)}</span>` : ''}
+                    ${article.apa_year ? `<span>📅 ${escapeHtml(article.apa_year)}</span>` : ''}
+                    ${article.apa_journal ? `<span>📰 ${escapeHtml(article.apa_journal)}</span>` : ''}
+                </div>
+                <div class="flex items-start gap-2 mb-2">
+                    <span class="text-gray-400 shrink-0">🔗</span>
+                    <div class="flex-1 min-w-0">${urlHtml}</div>
+                    ${pdfBtnHtml}
+                </div>
+                <div class="text-xs text-gray-600 mb-2">
+                    <span class="line-clamp-3" id="${summaryId}-short">${escapeHtml(summaryShort)}${article.summary && article.summary.length > 280 ? '…' : ''}</span>
+                    ${article.summary && article.summary.length > 280
+                        ? `<button onclick="document.getElementById('${summaryId}-full').classList.toggle('hidden');this.textContent=this.textContent.includes('▼')?'▲ ย่อ':'▼ ดูเพิ่มเติม'"
+                            class="text-indigo-500 text-xs mt-1">▼ ดูเพิ่มเติม</button>
+                           <div id="${summaryId}-full" class="hidden mt-2 text-gray-600 whitespace-pre-wrap">${escapeHtml(article.summary)}</div>`
+                        : ''}
+                </div>
+                ${sourceHtml ? `<div class="mt-1">Source: ${sourceHtml}</div>` : ''}
+            </div>`;
+        }
+
+        // Build url→registryStatus map from audit response
+        function buildRegistryMap(auditData) {
+            const map = {};
+            (auditData.ok || []).forEach(e => { if (e.open_url) map[e.open_url] = 'ok'; });
+            (auditData.missing_url || []).forEach(e => { if (e.evidence_id) map[e.evidence_id + '::missing'] = 'missing'; });
+            (auditData.unverified_url || []).forEach(e => { if (e.open_url) map[e.open_url] = 'unverified'; });
+            return map;
+        }
+
+        function getRegistryStatus(article, registryMap) {
+            if (!registryMap) return null;
+            const url = extractBestUrl(article);
+            if (!url) return null;
+            if (registryMap[url]) return registryMap[url];
+            // Check partial match by article ID
+            const m = url.match(/\/article\/view\/(\d+)/);
+            if (m) {
+                const id = m[1];
+                for (const k of Object.keys(registryMap)) {
+                    if (k.includes(`/article/view/${id}`)) return registryMap[k];
+                }
+            }
+            return 'not_registered';
+        }
+
+        // T4-A: Direct API Test
+        async function testDirectApi() {
+            const term = document.getElementById('at-term').value.trim();
+            if (!term) { alert('กรุณาใส่คำค้นหา'); return; }
+            const size = parseInt(document.getElementById('at-size').value);
+            const strict = document.getElementById('at-strict').checked;
+            const btn = document.getElementById('btn-at-api');
+            const out = document.getElementById('at-api-result');
+            btn.disabled = true; btn.textContent = '⏳ กำลังค้นหา...';
+            out.innerHTML = '<div class="text-gray-400 text-sm">กำลังเรียก API...</div>';
+
+            const t0 = Date.now();
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ term, size, page: 1, strict })
+                });
+                const elapsed = Date.now() - t0;
+                // Fetch search result and audit data in parallel
+                const [data, auditData] = await Promise.all([
+                    res.json(),
+                    fetch(`${API_BASE}/api/thaijo/evidence-audit`).then(r => r.json()).catch(() => null),
+                ]);
+                const cacheHit = elapsed < 500;
+                const registryMap = auditData ? buildRegistryMap(auditData) : null;
+
+                let html = '';
+                // Stats bar
+                const noteBadge = data.note
+                    ? `<span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">${escapeHtml(data.note)}</span>`
+                    : '';
+                html += `<div class="flex flex-wrap items-center gap-2 text-sm mb-2">
+                    <span class="font-medium">พบ ${data.count || 0} บทความ</span>
+                    <span class="text-gray-400">·</span>
+                    <span class="text-gray-500">${elapsed}ms</span>
+                    ${cacheHit ? '<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">🟢 CACHE HIT</span>'
+                               : '<span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">🔵 API CALL</span>'}
+                    ${noteBadge}
+                </div>`;
+
+                if (data.error) {
+                    html += `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">❌ ${escapeHtml(data.error)}</div>`;
+                } else if (!data.results || data.results.length === 0) {
+                    html += `<div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-700 text-sm">⚠️ ไม่พบบทความ</div>`;
+                } else {
+                    data.results.forEach(a => {
+                        const regStatus = getRegistryStatus(a, registryMap);
+                        html += renderAgentArticleCard(a, term, cacheHit, regStatus);
+                    });
+                }
+
+                // Raw JSON toggle
+                const rawId = 'raw-' + Math.random().toString(36).slice(2);
+                html += `<div class="mt-2">
+                    <button onclick="document.getElementById('${rawId}').classList.toggle('hidden');this.textContent=this.textContent.includes('▼')?'▲ ซ่อน JSON':'▼ ดู Raw JSON'"
+                        class="text-xs text-gray-500 hover:text-gray-700">▼ ดู Raw JSON</button>
+                    <pre id="${rawId}" class="hidden mt-2 bg-gray-900 text-green-300 rounded-lg p-3 text-xs overflow-x-auto max-h-64">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+                </div>`;
+
+                out.innerHTML = html;
+            } catch (err) {
+                out.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">❌ ${escapeHtml(err.message)}</div>`;
+            } finally {
+                btn.disabled = false; btn.textContent = '🔍 ทดสอบ';
+            }
+        }
+
+        // T4-B: Multi-Query Searcher — calls POST /api/thaijo/multi-search (single server-side request)
+        async function testMultiQuery() {
+            const lines = document.getElementById('at-queries').value
+                .split('\n').map(l => l.trim()).filter(Boolean);
+            if (!lines.length) { alert('กรุณาใส่ query อย่างน้อย 1 บรรทัด'); return; }
+            const size = parseInt(document.getElementById('at-multi-size').value);
+            const btn = document.getElementById('btn-at-multi');
+            const out = document.getElementById('at-multi-result');
+            btn.disabled = true; btn.textContent = '⏳ กำลังรัน...';
+            out.innerHTML = '<div class="text-gray-400 text-sm">กำลังรัน multi-search...</div>';
+
+            let data;
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/multi-search`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ queries: lines, size, strict: true })
+                });
+                data = await res.json();
+            } catch (err) {
+                out.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">❌ ${escapeHtml(err.message)}</div>`;
+                btn.disabled = false; btn.textContent = '▶ รัน Multi-Query';
+                return;
+            }
+
+            // Normalize field names from server response to match renderAgentArticleCard expectations
+            const queryResults = (data.query_results || []).map(qr => ({
+                query: qr.query,
+                count: qr.count,
+                elapsed: qr.elapsed_ms,
+                cacheHit: qr.cache_hit,
+                note: qr.note || '',
+                error: qr.error || '',
+            }));
+            const allArticles = (data.articles || []).map(a => ({ article: a, sourceQuery: a.search_term || '', cacheHit: false }));
+
+            // Build results HTML
+            let html = '';
+            // Per-query table
+            html += `<div class="overflow-x-auto">
+                <table class="w-full text-sm border rounded-lg overflow-hidden">
+                    <thead class="bg-gray-100">
+                        <tr>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-600">Query</th>
+                            <th class="px-3 py-2 text-center text-xs font-medium text-gray-600">Count</th>
+                            <th class="px-3 py-2 text-center text-xs font-medium text-gray-600">Time</th>
+                            <th class="px-3 py-2 text-center text-xs font-medium text-gray-600">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y bg-white">
+                        ${queryResults.map(qr => `
+                        <tr>
+                            <td class="px-3 py-2 text-gray-700 max-w-xs truncate" title="${escapeHtml(qr.query)}">${escapeHtml(qr.query)}</td>
+                            <td class="px-3 py-2 text-center font-mono ${qr.count > 0 ? 'text-green-700 font-bold' : 'text-red-500'}">${qr.count}</td>
+                            <td class="px-3 py-2 text-center text-gray-500 font-mono">${qr.elapsed}ms</td>
+                            <td class="px-3 py-2 text-center">
+                                ${qr.error
+                                    ? `<span class="text-xs bg-red-100 text-red-700 px-2 py-0.5 rounded-full">❌ ${escapeHtml(qr.error.slice(0,30))}</span>`
+                                    : qr.cacheHit
+                                        ? `<span class="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">🟢 CACHE HIT</span>`
+                                        : `<span class="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">🔵 API CALL</span>`}
+                                ${qr.note ? `<span class="text-xs text-amber-600 block mt-0.5">${escapeHtml(qr.note.slice(0,50))}</span>` : ''}
+                            </td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>`;
+
+            // Summary stats
+            const totalRaw = queryResults.reduce((s, q) => s + q.count, 0);
+            html += `<div class="flex gap-4 text-sm">
+                <span class="bg-gray-100 px-3 py-1 rounded-full">รวม (raw): <strong>${totalRaw}</strong></span>
+                <span class="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full">Unique (dedup): <strong>${allArticles.length}</strong></span>
+            </div>`;
+
+            // Merged article cards
+            if (allArticles.length) {
+                html += `<div class="space-y-3">`;
+                allArticles.forEach(({ article, sourceQuery, cacheHit }) => {
+                    html += renderAgentArticleCard(article, sourceQuery, cacheHit);
+                });
+                html += `</div>`;
+            } else {
+                html += `<div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-amber-700 text-sm">⚠️ ไม่พบบทความจากทุก query</div>`;
+            }
+
+            out.innerHTML = html;
+            btn.disabled = false; btn.textContent = '▶ รัน Multi-Query';
+        }
+
+        // T4-C: Sync Evidence
+        async function testSyncEvidence() {
+            const btn = document.getElementById('btn-at-sync');
+            const out = document.getElementById('at-sync-result');
+            btn.disabled = true; btn.textContent = '⏳ กำลัง sync...';
+            out.innerHTML = '<div class="text-gray-400 text-sm">กำลังเรียก sync-evidence...</div>';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/sync-evidence`, { method: 'POST' });
+                const data = await res.json();
+
+                const chips = [
+                    { label: 'synced', val: data.synced ?? 0, color: 'green' },
+                    { label: 'cleared', val: data.cleared ?? 0, color: 'red' },
+                    { label: 'unchanged', val: data.unchanged ?? 0, color: 'gray' },
+                    { label: 'errors', val: data.errors ?? 0, color: 'orange' },
+                ];
+                let html = `<div class="flex flex-wrap gap-2 mb-3">
+                    ${chips.map(c => `<span class="px-3 py-1 rounded-full text-sm font-medium bg-${c.color}-100 text-${c.color}-700">${c.label}: ${c.val}</span>`).join('')}
+                    <span class="text-xs text-gray-400 self-center">${new Date().toLocaleTimeString('th-TH')}</span>
+                </div>`;
+
+                if (data.details && data.details.length) {
+                    html += `<div class="overflow-x-auto">
+                        <table class="w-full text-xs border rounded-lg overflow-hidden">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-3 py-1.5 text-left font-medium text-gray-600">ID</th>
+                                    <th class="px-3 py-1.5 text-left font-medium text-gray-600">url</th>
+                                    <th class="px-3 py-1.5 text-center font-medium text-gray-600">action</th>
+                                    <th class="px-3 py-1.5 text-left font-medium text-gray-600">reason</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y bg-white">
+                                ${data.details.map(d => `
+                                <tr>
+                                    <td class="px-3 py-1.5 font-mono text-gray-600 truncate max-w-[8rem]" title="${escapeHtml(d.id||'')}">${escapeHtml((d.id||'').slice(0,12))}</td>
+                                    <td class="px-3 py-1.5 font-mono max-w-xs truncate" title="${escapeHtml(d.url||'')}">
+                                        ${d.url ? `<a href="${escapeHtml(d.url)}" target="_blank" rel="noopener" class="text-indigo-600 underline hover:text-indigo-800">${escapeHtml(d.url.slice(0,50))}…</a>` : '—'}
+                                    </td>
+                                    <td class="px-3 py-1.5 text-center">
+                                        <span class="px-2 py-0.5 rounded-full ${d.action==='synced'?'bg-green-100 text-green-700':d.action==='cleared'?'bg-red-100 text-red-700':'bg-gray-100 text-gray-600'}">${escapeHtml(d.action||'')}</span>
+                                    </td>
+                                    <td class="px-3 py-1.5 text-gray-500">${escapeHtml(d.reason||'')}</td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>`;
+                } else if (data.message) {
+                    html += `<div class="text-sm text-gray-600">${escapeHtml(data.message)}</div>`;
+                }
+
+                out.innerHTML = html;
+            } catch (err) {
+                out.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">❌ ${escapeHtml(err.message)}</div>`;
+            } finally {
+                btn.disabled = false; btn.textContent = '🔗 Sync Evidence Registry';
+            }
+        }
+
+        // T4-D: Evidence Registry Audit
+        async function auditEvidence() {
+            const btn = document.getElementById('btn-at-audit');
+            const out = document.getElementById('at-audit-result');
+            btn.disabled = true; btn.textContent = '⏳ กำลัง audit...';
+            out.innerHTML = '<div class="text-gray-400 text-sm">กำลังเรียก evidence-audit...</div>';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/evidence-audit`);
+                const data = await res.json();
+
+                const chips = [
+                    { label: '✅ OK', val: (data.ok || []).length, color: 'green' },
+                    { label: '⚠️ URL missing', val: (data.missing_url || []).length, color: 'amber' },
+                    { label: '❌ URL not in cache', val: (data.unverified_url || []).length, color: 'red' },
+                ];
+                let html = `<div class="flex flex-wrap gap-2 mb-4">
+                    ${chips.map(c => `<span class="px-3 py-1 rounded-full text-sm font-medium bg-${c.color}-100 text-${c.color}-700">${c.label}: ${c.val}</span>`).join('')}
+                    <span class="text-xs text-gray-400 self-center">${new Date().toLocaleTimeString('th-TH')} · total: ${data.total ?? 0}</span>
+                </div>`;
+
+                function auditTable(items, statusLabel, statusColor) {
+                    if (!items.length) return '';
+                    return `<div class="mb-4">
+                        <div class="text-xs font-semibold text-${statusColor}-700 uppercase tracking-wide mb-1.5">${statusLabel} (${items.length})</div>
+                        <div class="overflow-x-auto">
+                        <table class="w-full text-xs border rounded-lg overflow-hidden">
+                            <thead class="bg-gray-50">
+                                <tr>
+                                    <th class="px-3 py-1.5 text-left font-medium text-gray-600">ID</th>
+                                    <th class="px-3 py-1.5 text-left font-medium text-gray-600">title</th>
+                                    <th class="px-3 py-1.5 text-left font-medium text-gray-600">open_url</th>
+                                    <th class="px-3 py-1.5 text-left font-medium text-gray-600">cache_url</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y bg-white">
+                                ${items.map(r => `
+                                <tr>
+                                    <td class="px-3 py-1.5 font-mono text-gray-600 truncate max-w-[8rem]" title="${escapeHtml(r.evidence_id||'')}">${escapeHtml((r.evidence_id||'').slice(0,12))}</td>
+                                    <td class="px-3 py-1.5 max-w-[12rem] truncate" title="${escapeHtml(r.title||'')}">${escapeHtml((r.title||'—').slice(0,40))}</td>
+                                    <td class="px-3 py-1.5 font-mono max-w-xs truncate" title="${escapeHtml(r.open_url||'')}">
+                                        ${r.open_url ? `<a href="${escapeHtml(r.open_url)}" target="_blank" rel="noopener" class="text-indigo-600 underline hover:text-indigo-800">${escapeHtml(r.open_url.replace(/^https?:\/\/[^/]+/, '').slice(0,45))}</a>` : '<span class="text-gray-400">—</span>'}
+                                    </td>
+                                    <td class="px-3 py-1.5 font-mono max-w-xs truncate" title="${escapeHtml(r.cache_url||'')}">
+                                        ${r.cache_url && r.cache_url !== r.open_url ? `<a href="${escapeHtml(r.cache_url)}" target="_blank" rel="noopener" class="text-green-600 underline hover:text-green-800">${escapeHtml(r.cache_url.replace(/^https?:\/\/[^/]+/, '').slice(0,45))}</a>` : (r.cache_url ? '<span class="text-gray-400">same</span>' : '<span class="text-gray-400">—</span>')}
+                                    </td>
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                        </div>
+                    </div>`;
+                }
+
+                html += auditTable(data.ok || [], '✅ OK — URL verified in cache', 'green');
+                html += auditTable(data.missing_url || [], '⚠️ URL Missing', 'amber');
+                html += auditTable(data.unverified_url || [], '❌ URL Not in Cache', 'red');
+
+                out.innerHTML = html;
+            } catch (err) {
+                out.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">❌ ${escapeHtml(err.message)}</div>`;
+            } finally {
+                btn.disabled = false; btn.textContent = '🔍 Audit Evidence Registry';
+            }
+        }
+
+        // T3: ThaiJO Evidence Sync
+        async function runEvidenceSync() {
+            const btn = document.getElementById('btn-at-ev-sync');
+            const out = document.getElementById('at-ev-sync-result');
+            const model = document.getElementById('at-sync-model').value;
+            btn.disabled = true; btn.textContent = '⏳ กำลัง sync...';
+            out.innerHTML = '<div class="text-gray-400 text-sm animate-pulse">กำลังรัน evidence sync... (อาจใช้เวลาสักครู่)</div>';
+
+            try {
+                const res = await fetch(`${API_BASE}/api/thaijo/evidence-sync?model=${encodeURIComponent(model)}`, { method: 'POST' });
+                const data = await res.json();
+
+                // Phase 1 chips
+                const p1chips = [
+                    { label: 'cache rows', val: data.cache_rows_scanned ?? 0, color: 'gray' },
+                    { label: 'articles', val: data.articles_scanned ?? 0, color: 'gray' },
+                    { label: 'fields (rule)', val: data.fields_filled_rule ?? 0, color: 'blue' },
+                    { label: 'fields (LLM)', val: data.fields_filled_llm ?? 0, color: 'indigo' },
+                    { label: 'LLM calls', val: data.llm_calls ?? 0, color: 'purple' },
+                    { label: 'cache patched', val: data.cache_patched ?? 0, color: 'teal' },
+                ];
+                // Phase 1.5 chips
+                const p15chips = [
+                    { label: 'rows re-fetched', val: data.api_refetched_rows ?? 0, color: 'orange' },
+                    { label: 'new articles', val: data.api_new_articles ?? 0, color: 'amber' },
+                ];
+                // Phase 2 chips
+                const p2chips = [
+                    { label: 'inserted', val: data.evidence_inserted ?? 0, color: 'green' },
+                    { label: 'skipped', val: data.evidence_skipped ?? 0, color: 'gray' },
+                    { label: 'errors', val: data.evidence_errors ?? 0, color: 'red' },
+                ];
+
+                let html = `
+                <div class="space-y-3">
+                    <div>
+                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Phase 1 — Cache Enrichment</div>
+                        <div class="flex flex-wrap gap-2">
+                            ${p1chips.map(c => `<span class="px-3 py-1 rounded-full text-xs font-medium bg-${c.color}-100 text-${c.color}-700">${c.label}: ${c.val}</span>`).join('')}
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Phase 1.5 — API Re-fetch (< 5 refs)</div>
+                        <div class="flex flex-wrap gap-2">
+                            ${p15chips.map(c => `<span class="px-3 py-1 rounded-full text-xs font-medium bg-${c.color}-100 text-${c.color}-700">${c.label}: ${c.val}</span>`).join('')}
+                        </div>
+                    </div>
+                    <div>
+                        <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Phase 2 — Evidence Registration</div>
+                        <div class="flex flex-wrap gap-2">
+                            ${p2chips.map(c => `<span class="px-3 py-1 rounded-full text-xs font-medium bg-${c.color}-100 text-${c.color}-700">${c.label}: ${c.val}</span>`).join('')}
+                            <span class="text-xs text-gray-400 self-center">${new Date().toLocaleTimeString('th-TH')}</span>
+                        </div>
+                    </div>
+                </div>`;
+
+                // Detail table (show up to 50 rows)
+                const details = (data.details || []).slice(0, 50);
+                if (details.length) {
+                    const p1rows = details.filter(d => d.phase === 1);
+                    const p15rows = details.filter(d => d.phase === '1.5');
+                    const p2rows = details.filter(d => d.phase === 2);
+
+                    if (p1rows.length) {
+                        html += `<div class="mt-3">
+                            <div class="text-xs font-semibold text-blue-700 mb-1">Phase 1 — Field patches (${p1rows.length})</div>
+                            <div class="overflow-x-auto">
+                            <table class="w-full text-xs border rounded-lg overflow-hidden">
+                                <thead class="bg-gray-50"><tr>
+                                    <th class="px-2 py-1 text-left text-gray-600">cache_key</th>
+                                    <th class="px-2 py-1 text-left text-gray-600">pdf_url</th>
+                                    <th class="px-2 py-1 text-left text-gray-600">fields filled</th>
+                                    <th class="px-2 py-1 text-center text-gray-600">source</th>
+                                </tr></thead>
+                                <tbody class="divide-y bg-white">
+                                    ${p1rows.map(d => `<tr>
+                                        <td class="px-2 py-1 font-mono text-gray-500">${escapeHtml(d.cache_key || '')}</td>
+                                        <td class="px-2 py-1 font-mono truncate max-w-xs" title="${escapeHtml(d.pdf_url || '')}">
+                                            <a href="${escapeHtml(d.pdf_url || '')}" target="_blank" rel="noopener" class="text-indigo-600 underline">${escapeHtml((d.pdf_url || '').slice(0,50))}</a>
+                                        </td>
+                                        <td class="px-2 py-1 text-blue-700">${escapeHtml((d.fields || []).join(', '))}</td>
+                                        <td class="px-2 py-1 text-center">
+                                            <span class="px-1.5 py-0.5 rounded text-xs ${d.source==='rule+llm'?'bg-indigo-100 text-indigo-700':'bg-blue-100 text-blue-700'}">${escapeHtml(d.source||'')}</span>
+                                        </td>
+                                    </tr>`).join('')}
+                                </tbody>
+                            </table></div></div>`;
+                    }
+
+                    if (p15rows.length) {
+                        html += `<div class="mt-3">
+                            <div class="text-xs font-semibold text-orange-700 mb-1">Phase 1.5 — API Re-fetch (${p15rows.length})</div>
+                            <div class="overflow-x-auto">
+                            <table class="w-full text-xs border rounded-lg overflow-hidden">
+                                <thead class="bg-gray-50"><tr>
+                                    <th class="px-2 py-1 text-left text-gray-600">cache_key</th>
+                                    <th class="px-2 py-1 text-left text-gray-600">search_term</th>
+                                    <th class="px-2 py-1 text-center text-gray-600">new articles</th>
+                                </tr></thead>
+                                <tbody class="divide-y bg-white">
+                                    ${p15rows.map(d => `<tr>
+                                        <td class="px-2 py-1 font-mono text-gray-500">${escapeHtml(d.cache_key || '')}</td>
+                                        <td class="px-2 py-1 text-gray-700">${escapeHtml(d.search_term || '')}</td>
+                                        <td class="px-2 py-1 text-center">
+                                            <span class="px-1.5 py-0.5 rounded text-xs bg-orange-100 text-orange-700">+${d.new_articles ?? 0}</span>
+                                        </td>
+                                    </tr>`).join('')}
+                                </tbody>
+                            </table></div></div>`;
+                    }
+
+                    if (p2rows.length) {
+                        html += `<div class="mt-3">
+                            <div class="text-xs font-semibold text-green-700 mb-1">Phase 2 — Evidence registration (${p2rows.length})</div>
+                            <div class="overflow-x-auto">
+                            <table class="w-full text-xs border rounded-lg overflow-hidden">
+                                <thead class="bg-gray-50"><tr>
+                                    <th class="px-2 py-1 text-left text-gray-600">evidence_id</th>
+                                    <th class="px-2 py-1 text-left text-gray-600">title</th>
+                                    <th class="px-2 py-1 text-left text-gray-600">pdf_url</th>
+                                    <th class="px-2 py-1 text-center text-gray-600">action</th>
+                                </tr></thead>
+                                <tbody class="divide-y bg-white">
+                                    ${p2rows.map(d => `<tr>
+                                        <td class="px-2 py-1 font-mono text-gray-500 text-xs">${escapeHtml((d.evidence_id||'').slice(0,16))}</td>
+                                        <td class="px-2 py-1 truncate max-w-[12rem]" title="${escapeHtml(d.title||'')}">${escapeHtml((d.title||'—').slice(0,40))}</td>
+                                        <td class="px-2 py-1 font-mono truncate max-w-xs">
+                                            <a href="${escapeHtml(d.pdf_url||'')}" target="_blank" rel="noopener" class="text-indigo-600 underline">${escapeHtml((d.pdf_url||'').slice(0,45))}</a>
+                                        </td>
+                                        <td class="px-2 py-1 text-center">
+                                            <span class="px-1.5 py-0.5 rounded text-xs ${d.action==='inserted'?'bg-green-100 text-green-700':d.action==='error'?'bg-red-100 text-red-700':'bg-gray-100 text-gray-600'}">${escapeHtml(d.action||'')}</span>
+                                        </td>
+                                    </tr>`).join('')}
+                                </tbody>
+                            </table></div></div>`;
+                    }
+                }
+
+                out.innerHTML = html;
+            } catch (err) {
+                out.innerHTML = `<div class="bg-red-50 border border-red-200 rounded-lg p-3 text-red-700 text-sm">❌ ${escapeHtml(err.message)}</div>`;
+            } finally {
+                btn.disabled = false; btn.textContent = '🔄 Sync Evidence';
+            }
+        }
+
+        // ======================== INIT ========================
+        async function init() {
+            try {
+                const res = await fetch(`${API_BASE}/api/health`);
+                if (res.ok) {
+                    document.getElementById('health-dot').className = 'w-2 h-2 rounded-full bg-green-400';
+                    document.getElementById('health-text').textContent = 'Connected';
+                } else {
+                    document.getElementById('health-dot').className = 'w-2 h-2 rounded-full bg-red-400';
+                    document.getElementById('health-text').textContent = 'Error';
+                }
+            } catch {
+                document.getElementById('health-dot').className = 'w-2 h-2 rounded-full bg-red-400';
+                document.getElementById('health-text').textContent = 'Offline';
+            }
+        }
+        init();
+    </script>
+</body>
+</html>
