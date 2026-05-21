@@ -75,6 +75,16 @@ DOMAINS: dict[str, Domain] = {
         folder_prefix="D8_Population",
         expertise="ผู้เชี่ยวชาญด้านประชากรศาสตร์ การเติบโต การกระจายตัว และโครงสร้างประชากร",
     ),
+    "dt": Domain(
+        code="dt",
+        name_th="วิจัย ThaiJo",
+        name_en="ThaiJo Research",
+        folder_prefix="",
+        expertise=(
+            "ผู้เชี่ยวชาญด้านการสังเคราะห์งานวิจัยทางวิชาการ "
+            "ค้นหาและสรุปบทความจากฐานข้อมูล ThaiJo สร้างรายงานวิชาการอัตโนมัติ"
+        ),
+    ),
 }
 
 DOMAIN_LIST_TEXT = "\n".join(

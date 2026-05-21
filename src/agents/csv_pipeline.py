@@ -28,10 +28,26 @@ def _get_llm() -> LLM:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _run_agent(agent: Agent, description: str, expected: str, max_retries: int = 2) -> str:
-    """Run a single-agent CrewAI task with retry on empty/None response."""
+def _run_agent(
+    agent: Agent,
+    description: str,
+    expected: str,
+    max_retries: int = 2,
+    # Optional context for error logging
+    step: str = "",
+    domain: str = "",
+    session_id: str = "",
+) -> str:
+    """Run a single-agent CrewAI task with retry on empty/None response.
+
+    All failures are persisted to error_logs/ via log_agent_error().
+    """
+    from src.tools.error_logger import log_agent_error
+
     task = Task(description=description, expected_output=expected, agent=agent)
     crew = Crew(agents=[agent], tasks=[task], verbose=False)
+    prompt_snippet = description[:250]
+
     for attempt in range(max_retries + 1):
         try:
             result = str(crew.kickoff()).strip()
@@ -44,13 +60,80 @@ def _run_agent(agent: Agent, description: str, expected: str, max_retries: int =
             if ("None or empty" in err_str or "empty" in err_str.lower()) and attempt < max_retries:
                 time.sleep(3)
                 continue
-            return f"[Agent error: {exc}]"
-    return f"[Agent error: empty response after {max_retries} retries]"
+            error_msg = f"[Agent error: {exc}]"
+            log_agent_error(
+                error_message=error_msg,
+                agent_name=agent.role,
+                step=step,
+                domain=domain,
+                prompt=prompt_snippet,
+                session_id=session_id,
+                attempt=attempt,
+            )
+            return error_msg
+
+    error_msg = f"[Agent error: empty response after {max_retries} retries]"
+    log_agent_error(
+        error_message=error_msg,
+        agent_name=agent.role,
+        step=step,
+        domain=domain,
+        prompt=prompt_snippet,
+        session_id=session_id,
+        attempt=max_retries,
+    )
+    return error_msg
 
 
 def _extract_code(text: str) -> str:
     m = re.search(r"```(?:python)?\n(.*?)```", text, re.DOTALL)
     return m.group(1).strip() if m else text.strip()
+
+
+def _is_agent_error(text: str) -> bool:
+    """True when the text is an agent failure message, not real output."""
+    t = (text or "").strip()
+    return t.startswith("[Agent error:") or not t or t == "None"
+
+
+def _is_auth_error(text: str) -> bool:
+    """True when the failure is an API key / quota issue (non-retryable)."""
+    t = (text or "").lower()
+    return "403" in t or "permission_denied" in t or "api key" in t or "leaked" in t or "quota" in t
+
+
+def _is_exec_error(output: str) -> bool:
+    """True when exec_python returned a runtime/timeout error."""
+    if not output:
+        return False
+    return (
+        output.startswith("Error:")
+        or "timed out" in output.lower()
+        or ("STDERR" in output and ("error" in output.lower() or "Error" in output))
+    )
+
+
+def _log_exec_error(
+    output: str,
+    code: str = "",
+    step: str = "executor",
+    domain: str = "",
+    session_id: str = "",
+    attempt: int = 0,
+) -> None:
+    """Log Python executor errors (timeout / STDERR / crash) to error_logs/."""
+    if not _is_exec_error(output):
+        return
+    from src.tools.error_logger import log_agent_error
+    log_agent_error(
+        error_message=output[:600],
+        agent_name="Python Executor",
+        step=step,
+        domain=domain,
+        prompt=f"[code]\n{(code or '')[:200]}",
+        session_id=session_id,
+        attempt=attempt,
+    )
 
 
 # ── Pipeline ──────────────────────────────────────────────────────────────────
@@ -172,6 +255,7 @@ def run_pipeline(
             f"   โดย [ID:xxxxxx] คือ ID จริงที่ได้จาก tool (ห้ามเปลี่ยน)"
         ),
         "Selected file: exactly one line in format [ID:xxxxxx] filename.csv",
+        step="file_finder", domain=domain.code, session_id=session_id,
     )
     if file_result.startswith("[Agent error:") or not file_result.strip():
         file_result = fallback_find_file(prompt, domain.folder_prefix)
@@ -217,6 +301,7 @@ def run_pipeline(
                 f"Remember: file_id='{resolved_file_id}' must also be used in Python code."
             ),
             "Dataset schema with columns, dtypes, sample rows, and file_id",
+            step="schema", domain=domain.code, session_id=session_id,
         )
         if schema_result.startswith("[Agent error:") and resolved_file_id:
             schema_result = read_csv_schema_impl(resolved_file_id)
@@ -225,15 +310,16 @@ def run_pipeline(
     # STEP 4: Python Code Generator
     put({"type": "agent_start", "step": "code_gen", "agentName": "Python Code Generator"})
     generator = Agent(
-        role=f"Python Code Generator -- {domain.name_en}",
+        role=f"Python Code Generator — {domain.name_en}",
         goal=(
-            f"Generate Python/Pandas code to analyze {domain.name_th} data "
-            f"using load_csv('{resolved_file_id}') only"
+            f"สร้าง Python/Pandas code ที่รันได้ทันที วิเคราะห์ข้อมูล {domain.name_th} "
+            f"และ print ผลลัพธ์ชัดเจนพร้อมชื่อจังหวัด/พื้นที่จริง"
         ),
         backstory=(
             f"{domain.expertise}\n"
-            "You are a Python/Pandas expert who writes correct, clean, immediately runnable code. "
-            "You use only the file_id provided. Never use any other filename or path."
+            "คุณเป็น Python/Pandas expert ที่เขียนโค้ดถูกต้อง clean และรันได้ทันที "
+            "คุณใส่ใจเรื่อง output format: ชื่อจังหวัดต้องแสดงครบ ตัวเลขมี label ชัดเจน "
+            "ผลลัพธ์ต้องพร้อมให้ AI วิเคราะห์ต่อได้โดยไม่ต้องเดา"
         ),
         llm=llm,
         verbose=False,
@@ -243,52 +329,71 @@ def run_pipeline(
         generator,
         (
             f"Question: {prompt}\n"
-            f"Correct file_id (use this ONLY): '{resolved_file_id}'\n"
+            f"file_id (ใช้ค่านี้เท่านั้น): '{resolved_file_id}'\n"
             f"Schema:\n{schema_result}\n\n"
-            "MANDATORY RULES:\n"
-            f"1. First line of code MUST be: df = load_csv('{resolved_file_id}')\n"
-            "2. DO NOT define or redefine load_csv -- it is already provided\n"
-            "3. DO NOT import minio or define any database connection\n"
-            "4. DO NOT use pd.read_csv() with a filename -- only use load_csv()\n"
-            f"5. Use file_id='{resolved_file_id}' -- never use any other string\n"
-            "6. Filter and aggregate data to answer the question\n"
-            "7. Print all results clearly\n"
+            "==== กฎบังคับ (ห้ามละเมิด) ====\n"
+            f"1. บรรทัดแรก: df = load_csv('{resolved_file_id}')\n"
+            "2. ห้าม redefine load_csv / import minio / ใช้ pd.read_csv()\n"
+            f"3. ใช้ file_id='{resolved_file_id}' เท่านั้น\n\n"
+            "==== Output Format บังคับ ====\n"
+            "4. บรรทัดที่ 2 ของโค้ด: pd.set_option('display.max_rows', 100)\n"
+            "5. ก่อน print ทุก section ให้ print หัวข้อ เช่น print('=== สรุปรายจังหวัด ===')\n"
+            "6. ชื่อจังหวัด/พื้นที่ต้องแสดงเป็น text ครบ — ห้าม print index ตัวเลขอย่างเดียว\n"
+            "7. ถ้ามี column จังหวัด/อำเภอ ต้องใส่เป็น column แรกในทุกตาราง\n"
+            "8. print(df.to_string(index=False)) แทน print(df) เพื่อแสดงครบ\n\n"
+            "==== การวิเคราะห์ ====\n"
+            "9. Filter/aggregate ตามคำถาม\n"
+            "10. จัดอันดับ Top 10 (มากไปน้อย) ถ้าถามหาพื้นที่สูงสุด\n"
+            "11. print สถิติภาพรวม (mean, max, min) พร้อม label\n"
             "Wrap code in ```python ... ```"
         ),
-        "Working Python code block where first line is df = load_csv(file_id)",
+        "Working Python code with clear labeled output including province names",
+        step="code_gen", domain=domain.code, session_id=session_id,
     )
     put({"type": "agent_done", "step": "code_gen", "agentName": "Python Code Generator", "result": code_result})
 
     # STEP 5: Python Executor
     put({"type": "agent_start", "step": "executor", "agentName": "Python Executor"})
     code = _extract_code(code_result)
-    code = re.sub(r"load_csv\(['\"][^'\"]*['\"]\)", f"load_csv('{resolved_file_id}')", code)
-    exec_output = exec_python(code)
 
-    if "STDERR" in exec_output and ("Error" in exec_output or "error" in exec_output):
-        retry_result = _run_agent(
-            generator,
-            (
-                f"Question: {prompt}\n"
-                f"file_id: '{resolved_file_id}'\n"
-                f"Schema:\n{schema_result}\n\n"
-                f"Previous code that produced an error:\n```python\n{code}\n```\n"
-                f"Error output:\n{exec_output}\n\n"
-                "Fix the code so it works correctly:\n"
-                f"1. First line must be: df = load_csv('{resolved_file_id}')\n"
-                "2. DO NOT redefine load_csv\n"
-                "3. Check column names match the schema exactly\n"
-                "4. Fix the logic error shown in the error message\n"
-                "Wrap code in ```python ... ```"
-            ),
-            "Fixed Python code that runs without errors",
-        )
-        retry_code = _extract_code(retry_result)
-        retry_code = re.sub(r"load_csv\(['\"][^'\"]*['\"]\)", f"load_csv('{resolved_file_id}')", retry_code)
-        retry_output = exec_python(retry_code)
-        if "STDERR" not in retry_output or len(retry_output) > len(exec_output):
-            code = retry_code
-            exec_output = retry_output
+    # Guard: don't execute if code gen returned an agent error
+    if _is_agent_error(code):
+        auth_hint = " (API key ถูก report ว่า leaked — กรุณาสร้าง key ใหม่)" if _is_auth_error(code_result) else ""
+        exec_output = f"[ข้ามการรัน — code generation ล้มเหลว{auth_hint}]\n{code_result}"
+        code = ""
+    else:
+        code = re.sub(r"load_csv\(['\"][^'\"]*['\"]\)", f"load_csv('{resolved_file_id}')", code)
+        exec_output = exec_python(code)
+        # Log executor error (timeout / STDERR / crash)
+        _log_exec_error(exec_output, code, "executor", domain.code, session_id, attempt=0)
+
+        if _is_exec_error(exec_output):
+            retry_result = _run_agent(
+                generator,
+                (
+                    f"Question: {prompt}\n"
+                    f"file_id: '{resolved_file_id}'\n"
+                    f"Schema:\n{schema_result}\n\n"
+                    f"Previous code that produced an error:\n```python\n{code}\n```\n"
+                    f"Error output:\n{exec_output}\n\n"
+                    "Fix the code so it works correctly:\n"
+                    f"1. First line must be: df = load_csv('{resolved_file_id}')\n"
+                    "2. DO NOT redefine load_csv\n"
+                    "3. Check column names match the schema exactly\n"
+                    "4. Fix the logic error shown in the error message\n"
+                    "Wrap code in ```python ... ```"
+                ),
+                "Fixed Python code that runs without errors",
+                step="code_gen_retry", domain=domain.code, session_id=session_id,
+            )
+            retry_code = _extract_code(retry_result)
+            retry_code = re.sub(r"load_csv\(['\"][^'\"]*['\"]\)", f"load_csv('{resolved_file_id}')", retry_code)
+            retry_output = exec_python(retry_code)
+            # Log retry executor error too
+            _log_exec_error(retry_output, retry_code, "executor_retry", domain.code, session_id, attempt=1)
+            if not _is_exec_error(retry_output) or len(retry_output) > len(exec_output):
+                code = retry_code
+                exec_output = retry_output
             code_result = retry_result
 
     put({"type": "agent_done", "step": "executor", "agentName": "Python Executor",
@@ -297,9 +402,17 @@ def run_pipeline(
     # STEP 6: Insight Analyst
     put({"type": "agent_start", "step": "insight", "agentName": "Insight Analyst Agent"})
     analyst = Agent(
-        role=f"Insight Analyst Agent -- {domain.name_en}",
-        goal=f"Analyze results and summarize insights from {domain.name_th} data in Thai",
-        backstory=domain.expertise,
+        role=f"Insight Analyst — {domain.name_en}",
+        goal=(
+            f"วิเคราะห์ผลลัพธ์จากข้อมูล {domain.name_th} และเขียนรายงานภาษาไทย "
+            "โดยใช้เฉพาะข้อมูลจริงจาก Execution Result เท่านั้น"
+        ),
+        backstory=(
+            f"{domain.expertise}\n"
+            "คุณเป็นนักวิเคราะห์ข้อมูลสาธารณสุขที่รายงานผลจากข้อมูลจริงเท่านั้น "
+            "คุณไม่สร้างข้อมูล ชื่อจังหวัด หรือตัวเลขที่ไม่มีในผลลัพธ์ "
+            "ถ้าข้อมูลไม่พอ คุณบอกตรงๆ ว่า 'ข้อมูลไม่เพียงพอสำหรับการวิเคราะห์นี้'"
+        ),
         llm=llm,
         verbose=False,
         max_iter=5,
@@ -307,21 +420,30 @@ def run_pipeline(
     insight = _run_agent(
         analyst,
         (
-            f"Question: {prompt}\n"
-            f"Domain: {domain.name_th}\n"
-            f"Execution result:\n{exec_output}\n\n"
-            "Write a full insight report in Thai with this structure:\n"
-            "1. A brief summary paragraph explaining what the data shows.\n"
-            "2. ONE markdown table summarizing the key numbers from the execution result.\n"
-            "   Format: | Column1 | Column2 | ... |\n"
-            "           |---------|---------|-----|\n"
-            "           | value   | value   | ... |\n"
-            "3. Key observations as bullet points (trends, gender diff, district comparison, etc.)\n"
-            "4. Recommendations or caveats if relevant.\n"
-            "IMPORTANT: Always include the markdown table even if the data is simple. "
-            "If execution had errors, explain the cause and still try to summarize what is known."
+            f"คำถาม: {prompt}\n"
+            f"Domain: {domain.name_th}\n\n"
+            f"ผลการรันโค้ด (Execution Result):\n{exec_output}\n\n"
+            "==== กฎเหล็ก — ห้ามละเมิด ====\n"
+            "1. ใช้เฉพาะข้อมูลจาก Execution Result ด้านบน\n"
+            "2. ห้ามสร้างชื่อจังหวัดสมมติ เช่น 'จังหวัด ก.' / 'จังหวัด ข.' — ต้องใช้ชื่อจริงเท่านั้น\n"
+            "3. ห้ามสร้างตัวเลขที่ไม่มีในผลลัพธ์\n"
+            "4. ถ้า Execution มี error → อธิบาย error + สรุปจากสิ่งที่รู้ได้ อย่าสร้างตารางสมมติ\n"
+            "5. ถ้าไม่มีชื่อจังหวัดในผลลัพธ์ → บอกว่า 'ข้อมูลไม่ระบุพื้นที่เฉพาะเจาะจง'\n\n"
+            "==== โครงสร้างรายงาน ====\n"
+            "## สรุปภาพรวม\n"
+            "อธิบายว่าพบอะไรจากข้อมูล (2-3 ประโยค)\n\n"
+            "## ตารางข้อมูลสำคัญ\n"
+            "ตาราง markdown จากข้อมูลจริงในผลลัพธ์:\n"
+            "| จังหวัด/พื้นที่ | ตัวชี้วัด 1 | ตัวชี้วัด 2 | ... |\n"
+            "|---|---|---|---|\n"
+            "| [ชื่อจริงจากผลลัพธ์] | [ค่าจริง] | ... |\n\n"
+            "## ข้อสังเกตสำคัญ\n"
+            "- bullet points อธิบาย trend, ความแตกต่าง, จุดน่าสนใจ\n\n"
+            "## ข้อเสนอแนะ\n"
+            "มาตรการหรือแนวทางที่เหมาะสม"
         ),
-        "Insight report in Thai with markdown table + bullet observations",
+        "รายงาน insight ภาษาไทยที่มีตาราง markdown จากข้อมูลจริงและ bullet observations",
+        step="insight", domain=domain.code, session_id=session_id,
     )
     put({"type": "agent_done", "step": "insight", "agentName": "Insight Analyst Agent", "result": insight})
 

@@ -155,10 +155,19 @@ def minio_preamble() -> str:
         f"_c = _m.Minio('{endpoint}', access_key='{access_key}', "
         f"secret_key='{secret_key}', secure={secure})\n"
         f"def load_csv(path): return pd.read_csv(io.BytesIO(_c.get_object('{bucket}', path).read()))\n"
+        # ── Analysis helpers available to generated code ──────────────────────
+        f"def pct_rank(s):\n"
+        f"    \"\"\"Percentile rank 0-100, NaN → 0.\"\"\"\n"
+        f"    return s.rank(pct=True, na_option='bottom') * 100\n"
+        f"def composite_score(*series):\n"
+        f"    \"\"\"Mean percentile rank across series — higher = worse (Red Zone).\"\"\"\n"
+        f"    import numpy as _np\n"
+        f"    return _np.nanmean([pct_rank(s).values for s in series], axis=0)\n"
     )
 
 
-def exec_python(code: str) -> str:
+def exec_python(code: str, timeout: int = 90) -> str:
+    """Execute Python code. timeout=90s (single file) or 180s (multi-file)."""
     full = minio_preamble() + "\n" + code
     with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False, encoding="utf-8") as f:
         f.write(full)
@@ -166,18 +175,21 @@ def exec_python(code: str) -> str:
     try:
         result = subprocess.run(
             [sys.executable, tmp_path],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=timeout,
         )
         out = result.stdout
         if result.stderr:
             out += "\nSTDERR:\n" + result.stderr
         return out or "(no output)"
     except subprocess.TimeoutExpired:
-        return "Error: Code execution timed out (60s)"
+        return f"Error: Code execution timed out ({timeout}s)"
     except Exception as exc:
         return f"Error: {exc}"
     finally:
-        os.unlink(tmp_path)
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 # ── CrewAI Tools ──────────────────────────────────────────────────────────────
