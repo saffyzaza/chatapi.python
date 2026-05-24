@@ -11,8 +11,8 @@ def get_sync_pool() -> psycopg2.pool.ThreadedConnectionPool:
     if _sync_pool is None:
         s = get_settings()
         _sync_pool = psycopg2.pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=10,
+            minconn=2,
+            maxconn=20,
             host=s.DB_HOST,
             port=s.DB_PORT,
             database=s.DB_NAME,

@@ -12,6 +12,9 @@ from src.config import get_settings
 from src.routers.accident_chat import router as accident_chat_router
 from src.routers.accident_policy import router as accident_policy_router
 from src.routers.analyze import router as analyze_router
+from src.routers.error_log import router as error_log_router
+from src.routers.thaijo import router as thaijo_router
+from src.routers.tools_router import router as tools_router
 
 load_dotenv()
 
@@ -39,6 +42,9 @@ app.add_middleware(
 app.include_router(analyze_router)
 app.include_router(accident_chat_router)
 app.include_router(accident_policy_router)
+app.include_router(error_log_router)
+app.include_router(thaijo_router)
+app.include_router(tools_router)
 
 # ── Static UI pages ──────────────────────────────────────────────────────────
 _STATIC_DIR = Path(__file__).parent / "src" / "static"

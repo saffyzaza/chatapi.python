@@ -13,4 +13,4 @@ class AnalyzeRequest(BaseModel):
     sessionId: str
     prompt: str
     history: Optional[list[HistoryMessage]] = None
-    mode: str = "normal"  # "normal" | "tavily"
+    mode: str = "normal"  # "normal" | "tavily" | "multi" | "thaijo"

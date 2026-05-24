@@ -10,6 +10,12 @@ class Settings(BaseSettings):
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "1234"
 
+    # OpenAI
+    OPENAI_API_KEY: str = ""
+
+    # Redis (ThaiJo cache)
+    REDIS_URL: str = "redis://localhost:6379/0"
+
     # Google Gemini
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
@@ -22,6 +28,10 @@ class Settings(BaseSettings):
 
     # Tavily
     TAVILY_API_KEY: str = ""
+
+    # ThaiJo Research API
+    THAIJO_API_URL: str = "https://www.tci-thaijo.org/api"
+    THAIJO_MAX_RESULTS: int = 5
 
     # MinIO
     MINIO_ENDPOINT: str = "localhost"
