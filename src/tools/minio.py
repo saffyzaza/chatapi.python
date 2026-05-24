@@ -143,6 +143,95 @@ def read_csv_schema_impl(file_ref: str) -> str:
         return f"Error reading schema for '{file_id}': {exc}"
 
 
+def read_file_bytes_impl(file_id: str) -> bytes:
+    """Read raw bytes from a MinIO object."""
+    client = _get_client()
+    resp = client.get_object(_bucket(), file_id)
+    return resp.read()
+
+
+def read_file_extension_impl(file_id: str) -> str:
+    """Get file extension from MinIO metadata."""
+    client = _get_client()
+    try:
+        stat = client.stat_object(_bucket(), file_id)
+        meta = {k.lower(): v for k, v in (stat.metadata or {}).items()}
+        ext = meta.get("x-amz-meta-extension", "").strip().lower()
+        if ext:
+            return ext
+    except Exception:
+        pass
+    # Fallback: infer from file_id or file_map
+    dot = file_id.rfind(".")
+    if dot >= 0:
+        return file_id[dot + 1:].lower()
+    return ""
+
+
+def read_file_text_impl(file_id: str, extension: str = "") -> str:
+    """Extract text content from any file type in MinIO.
+
+    Returns:
+      - CSV/XLSX: JSON schema + sample rows
+      - PDF: extracted page text (up to 20 pages)
+      - DOCX/DOC: extracted paragraph text
+      - other: raw UTF-8 decode (first 10 000 chars)
+    """
+    client = _get_client()
+    try:
+        resp = client.get_object(_bucket(), file_id)
+        content: bytes = resp.read()
+    except Exception as exc:
+        return f"Error reading file '{file_id}': {exc}"
+
+    ext = (extension or read_file_extension_impl(file_id)).lower().lstrip(".")
+
+    try:
+        if ext == "pdf":
+            import pdfplumber
+            parts: list[str] = []
+            with pdfplumber.open(io.BytesIO(content)) as pdf:
+                for page in pdf.pages[:20]:
+                    text = page.extract_text()
+                    if text:
+                        parts.append(text)
+            return "\n\n".join(parts) or "[ไม่สามารถดึงข้อความจาก PDF ได้]"
+
+        elif ext in ("doc", "docx"):
+            import docx as _docx
+            doc = _docx.Document(io.BytesIO(content))
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            return text or "[ไม่มีข้อความใน Word document]"
+
+        elif ext in ("xlsx", "xls"):
+            engine = "openpyxl" if ext == "xlsx" else "xlrd"
+            try:
+                df = pd.read_excel(io.BytesIO(content), engine=engine)
+            except Exception:
+                df = pd.read_excel(io.BytesIO(content))  # let pandas auto-detect
+            return json.dumps(
+                {
+                    "file_id": file_id,
+                    "type": "excel",
+                    "shape": list(df.shape),
+                    "columns": list(df.columns),
+                    "dtypes": {c: str(t) for c, t in df.dtypes.items()},
+                    "sample": df.head(5).to_dict(orient="records"),
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        elif ext == "csv":
+            return read_csv_schema_impl(file_id)
+
+        else:
+            return content.decode("utf-8", errors="ignore")[:10_000]
+
+    except Exception as exc:
+        return f"Error parsing {ext} file '{file_id}': {exc}"
+
+
 def minio_preamble() -> str:
     s = get_settings()
     endpoint = s.minio_endpoint_url

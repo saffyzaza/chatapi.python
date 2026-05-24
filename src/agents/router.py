@@ -19,11 +19,61 @@ _THAIJO_KEYWORDS = [
     r"ค้นหาบทความ", r"journal\s*report",
 ]
 
+_ACCIDENT_KEYWORDS = [
+    r"อุบัติเหตุ", r"อุบัติเหตุทางถนน", r"จราจร", r"รถชน", r"ชนแล้ว", r"ชนกัน",
+    r"เสียชีวิต.*อุบัติเหตุ", r"บาดเจ็บ.*อุบัติเหตุ", r"ผู้บาดเจ็บ", r"ผู้เสียชีวิต",
+    r"rti", r"road\s*traffic", r"traffic\s*injur", r"accident",
+    r"มอเตอร์ไซค์", r"รถจักรยานยนต์",
+]
+
 
 def _has_thaijo_signal(prompt: str) -> bool:
     """True when the query is asking for a ThaiJo research journal."""
     p = prompt.lower()
     return any(re.search(kw, p) for kw in _THAIJO_KEYWORDS)
+
+
+def _has_accident_signal(prompt: str) -> bool:
+    """True when the query is clearly about road accidents / injuries."""
+    p = prompt.lower()
+    return any(re.search(kw, p) for kw in _ACCIDENT_KEYWORDS)
+
+
+# ── Data-analysis intent screening ───────────────────────────────────────────
+# Signals that indicate the user wants CSV-based statistical analysis.
+# If NONE of these appear, the question is general knowledge → route d0.
+_DATA_ANALYSIS_SIGNALS = [
+    # ข้อมูล/สถิติ
+    r"ข้อมูล", r"สถิติ", r"ตัวเลข", r"ตัวชี้วัด",
+    # อัตรา/ร้อยละ
+    r"อัตรา", r"ร้อยละ", r"จำนวน.*ราย", r"จำนวน.*คน", r"จำนวน.*ครั้ง",
+    # ภูมิศาสตร์ → ต้องการ CSV จังหวัด
+    r"จังหวัด", r"อำเภอ", r"ภาค", r"ทั่วประเทศ", r"จาก\s*\d+\s*จังหวัด",
+    # เวลา → แนวโน้ม CSV
+    r"ปี\s*(?:พ\.ศ\.|25\d\d)", r"แนวโน้ม", r"เพิ่มขึ้น", r"ลดลง", r"ย้อนหลัง",
+    # การวิเคราะห์
+    r"วิเคราะห์", r"เปรียบเทียบ", r"จัดอันดับ", r"ranking", r"top\s*\d",
+    r"สูงสุด\s*\d", r"ต่ำสุด\s*\d",
+    # กราฟ/ชาร์ต
+    r"กราฟ", r"ชาร์ต", r"chart", r"graph", r"plot",
+    # ระบาดวิทยา
+    r"ความชุก", r"อุบัติการณ์", r"ระบาดวิทยา", r"prevalence", r"incidence",
+    # Red zone / hot spot
+    r"red\s*zone", r"hot\s*spot", r"พื้นที่เสี่ยง",
+    # รายงาน
+    r"รายงาน(?:สรุป|ผล|ข้อมูล)", r"summary.*data", r"data.*report",
+]
+
+
+def _has_data_analysis_signal(prompt: str) -> bool:
+    """True when the prompt is asking for CSV-based data/statistics analysis.
+
+    Returns False for general knowledge/advice questions (วิธี, แนะนำ, ปรึกษา, etc.)
+    that should route to d0 without touching any CSV domain.
+    """
+    p = prompt.lower()
+    return any(re.search(sig, p) for sig in _DATA_ANALYSIS_SIGNALS)
+
 
 # ── Step 3: Keyword-based multi-domain detection ──────────────────────────────
 
@@ -49,6 +99,7 @@ _MULTI_KEYWORDS = [
 ]
 
 _DOMAIN_KEYWORDS: dict[str, list[str]] = {
+    "d1": ["อุบัติเหตุ", "อุบัติเหตุทางถนน", "รถชน", "จราจร", "rti", "accident", "traffic injury"],
     "d2": ["สุขภาพจิต", "ฆ่าตัวตาย", "ซึมเศร้า", "จิตเวช", "mental"],
     "d3": ["ncd", "เบาหวาน", "ความดัน", "หัวใจ", "หลอดเลือด", "โรคไม่ติดต่อ", "ncds"],
     "d4": ["โภชนาการ", "อ้วน", "bmi", "วัยเรียน", "วัยทำงาน", "ภาวะโภชนาการ", "น้ำหนัก", "nutrition"],
@@ -84,6 +135,14 @@ def route_domain(prompt: str, history_context: str = "") -> Domain:
     if _has_thaijo_signal(prompt):
         return DOMAINS["dt"]
 
+    # Fast path: Road accidents (high-priority hard rule)
+    if _has_accident_signal(prompt):
+        return DOMAINS["d1"]
+
+    # Fast path: no data/statistics signals → general knowledge, skip CSV domains
+    if not _has_data_analysis_signal(prompt):
+        return DOMAINS["d0"]
+
     router = Agent(
         role="Router Agent",
         goal="วิเคราะห์คำถามแล้วเลือก domain ที่เหมาะสมที่สุด",
@@ -103,6 +162,7 @@ def route_domain(prompt: str, history_context: str = "") -> Domain:
             f"{history_section}"
             f"คำถามล่าสุด: {prompt}\n\n"
             f"Domain ที่มี:\n{DOMAIN_LIST_TEXT}\n\n"
+            "กฎสำคัญ: ถ้าคำถามมีสัญญาณเรื่องอุบัติเหตุทางถนน/รถชน/RTI/จราจร ให้เลือก d1 ทันที\n"
             "เลือก domain ที่เหมาะสมที่สุด 1 อัน ตอบเฉพาะรหัส เช่น d2 หรือ dt"
         ),
         expected_output="รหัส domain เช่น d2 หรือ dt",
@@ -127,6 +187,14 @@ def route_multi_domain(prompt: str, history_context: str = "") -> tuple[list[Dom
     Returns (domains, is_multi).  is_multi=True when ≥2 CSV domains are needed.
     Uses fast keyword check first; LLM refines the domain codes.
     """
+    # Hard rule: accident questions should route to d1 pipeline, not CSV multi-domain
+    if _has_accident_signal(prompt):
+        return [DOMAINS["d1"]], False
+
+    # Screen: no data/statistics signals → general knowledge, skip all CSV domains
+    if not _has_data_analysis_signal(prompt):
+        return [DOMAINS["d0"]], False
+
     force_multi = _has_multi_signal(prompt)
 
     router = Agent(
@@ -153,6 +221,7 @@ def route_multi_domain(prompt: str, history_context: str = "") -> tuple[list[Dom
             f"{history_section}"
             f"คำถาม: {prompt}\n"
             f"{multi_hint}\n"
+            "กฎสำคัญ: ถ้าคำถามมีคำว่าอุบัติเหตุ/รถชน/RTI ให้ตอบ d1 เท่านั้น ห้ามเลือก d8\n"
             "Domains ที่มีไฟล์ CSV:\n"
             "- d2: สุขภาพจิต — ฆ่าตัวตาย ซึมเศร้า จิตเวช\n"
             "- d3: โรคไม่ติดต่อ (NCDs) — เบาหวาน ความดัน หัวใจ\n"
@@ -207,6 +276,10 @@ def route_with_web_search(prompt: str, history_context: str = "") -> tuple[str, 
         ("d0", DOMAINS["d0"])   — ตอบจากความรู้ทั่วไป
         ("dN", DOMAINS["dN"])   — domain เฉพาะทาง
     """
+    # Hard rule: accident queries should go to d1 directly
+    if _has_accident_signal(prompt):
+        return "d1", DOMAINS["d1"]
+
     router = Agent(
         role="Smart Router Agent",
         goal="วิเคราะห์คำถามแล้วตัดสินใจว่าต้องค้นข้อมูลจากอินเทอร์เน็ตหรือตอบจากความรู้",

@@ -31,8 +31,19 @@ from src.tools.minio import (
 )
 from src.agents.csv_pipeline import (
     _get_llm, _run_agent, _extract_code,
+    _sanitize_generated_code,
+    _age_scope_repair_hints,
+    _strip_csv_extension_mentions,
     _is_agent_error, _is_auth_error,
     _is_exec_error, _log_exec_error,
+    _find_code_issues,
+)
+from src.agents.prompt_profile import (
+    ANALYST_CORE_POLICY,
+    CODE_GENERATOR_CORE_POLICY,
+    INSIGHT_RESPONSE_BLUEPRINT,
+    MISSING_DATA_POLICY,
+    join_prompt,
 )
 
 MAX_FILES = 5
@@ -162,16 +173,146 @@ def _keyword_select(prompt: str, combined_text: str, max_n: int) -> list[str]:
     if not lines:
         return []
     words = set(re.sub(r"[^\w\s]", " ", prompt.lower()).split())
+    target_ages = _extract_age_ranges(prompt)
 
     def score(line: str) -> int:
         ll = line.lower()
-        return sum(1 for w in words if len(w) > 2 and w in ll)
+        base = sum(1 for w in words if len(w) > 2 and w in ll)
+
+        if not target_ages:
+            return base
+
+        line_ages = _extract_age_ranges(line)
+        if not line_ages:
+            return base
+
+        age_bonus = 0
+        for target in target_ages:
+            best = 0
+            for found in line_ages:
+                overlap = _range_overlap(target, found)
+                if overlap > 0:
+                    best = max(best, 20 + overlap)
+                else:
+                    dist = _range_distance(target, found)
+                    best = max(best, max(1, 10 - dist))
+            age_bonus += best
+
+        return base + age_bonus
 
     return sorted(lines, key=score, reverse=True)[:max_n]
 
 
 def _parse_file_lines(text: str) -> list[str]:
     return [ln.strip() for ln in text.split("\n") if ln.strip() and "[ID:" in ln]
+
+
+def _extract_top_n(prompt: str, default_n: int = 10) -> int:
+    m = re.search(r"(?:top|อันดับ)\s*(\d{1,2})", prompt.lower())
+    if m:
+        try:
+            n = int(m.group(1))
+            return max(3, min(n, 30))
+        except Exception:
+            return default_n
+    return default_n
+
+
+def _extract_age_ranges(text: str) -> list[tuple[int, int]]:
+    ranges: list[tuple[int, int]] = []
+    for a, b in re.findall(r"(?<!\d)(\d{1,2})\s*[-–]\s*(\d{1,2})(?!\d)", text):
+        lo = min(int(a), int(b))
+        hi = max(int(a), int(b))
+        ranges.append((lo, hi))
+
+    deduped: list[tuple[int, int]] = []
+    for age_range in ranges:
+        if age_range not in deduped:
+            deduped.append(age_range)
+    return deduped
+
+
+def _range_overlap(a: tuple[int, int], b: tuple[int, int]) -> int:
+    lo = max(a[0], b[0])
+    hi = min(a[1], b[1])
+    return max(0, hi - lo + 1)
+
+
+def _range_distance(a: tuple[int, int], b: tuple[int, int]) -> int:
+    if _range_overlap(a, b) > 0:
+        return 0
+    if a[1] < b[0]:
+        return b[0] - a[1]
+    return a[0] - b[1]
+
+
+def _infer_focus(prompt: str) -> dict[str, Any]:
+    p = prompt.lower()
+    intents: list[str] = []
+
+    if any(k in p for k in ["เปรียบเทียบ", "เทียบ", "compare", "vs"]):
+        intents.append("comparison")
+    if any(k in p for k in ["แนวโน้ม", "trend", "ย้อนหลัง", "รายปี", "ช่วงเวลา"]):
+        intents.append("trend")
+    if any(k in p for k in ["red zone", "พื้นที่เสี่ยง", "เสี่ยงสูง", "จุดเสี่ยง"]):
+        intents.append("red_zone")
+    if any(k in p for k in ["อันดับ", "top", "สูงสุด", "ต่ำสุด"]):
+        intents.append("ranking")
+    if any(k in p for k in ["ความสัมพันธ์", "สัมพันธ์", "correlation"]):
+        intents.append("relationship")
+
+    if not intents:
+        intents.append("general")
+
+    years = re.findall(r"\b(20\d{2}|25\d{2})\b", prompt)
+    provinces = re.findall(r"จังหวัด\s*([\wก-๙.-]+)", prompt)
+    districts = re.findall(r"(?:อำเภอ|เขต)\s*([\wก-๙.-]+)", prompt)
+    age_ranges = _extract_age_ranges(prompt)
+
+    return {
+        "intents": intents,
+        "top_n": _extract_top_n(prompt),
+        "years": list(dict.fromkeys(years)),
+        "provinces": list(dict.fromkeys(provinces)),
+        "districts": list(dict.fromkeys(districts)),
+        "age_ranges": age_ranges,
+    }
+
+
+def _focus_brief(focus: dict[str, Any]) -> str:
+    age_ranges = focus.get("age_ranges", [])
+    age_text = [f"{lo}-{hi}" for lo, hi in age_ranges] if age_ranges else "not specified"
+    return "\n".join([
+        f"- intent: {', '.join(focus.get('intents', []))}",
+        f"- top_n: {focus.get('top_n', 10)}",
+        f"- years: {focus.get('years', []) or 'not specified'}",
+        f"- provinces: {focus.get('provinces', []) or 'not specified'}",
+        f"- districts: {focus.get('districts', []) or 'not specified'}",
+        f"- age_ranges: {age_text}",
+    ])
+
+
+def _build_column_hints(prompt: str, schemas_info: list[dict]) -> str:
+    words = [w for w in re.sub(r"[^\wก-๙\s]", " ", prompt.lower()).split() if len(w) > 1]
+    if not words:
+        return "- no keyword hints"
+
+    hints: list[str] = []
+    for info in schemas_info:
+        cols: list[str] = info.get("cols", [])
+        scored: list[tuple[int, str]] = []
+        for col in cols:
+            col_l = str(col).lower()
+            score = sum(1 for w in words if w in col_l or col_l in w)
+            if score > 0:
+                scored.append((score, col))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        top_cols = [c for _, c in scored[:6]]
+        if top_cols:
+            hints.append(f"- df{info.get('index')}: {top_cols}")
+
+    return "\n".join(hints) if hints else "- no strongly matched columns"
 
 
 # ── Main Pipeline ─────────────────────────────────────────────────────────────
@@ -195,6 +336,7 @@ def run_multi_pipeline(
     domain_names_th = " + ".join(d.name_th for d in domains)
     domain_names_en = " + ".join(d.name_en for d in domains)
     domain_prefixes = [d.folder_prefix for d in domains if d.folder_prefix]
+    focus = _infer_focus(prompt)
 
     # ── STEP 1a: Multi-File Finder (agent with list_csv_files tool) ───────────
     put({"type": "agent_start", "step": "file_finder", "agentName": "Multi-File Finder Agent"})
@@ -335,18 +477,21 @@ def run_multi_pipeline(
 
     load_block = "\n".join(f"df{i} = load_csv('{fid}')" for i, (fid, _) in enumerate(selected_files, 1))
     n = len(selected_files)
+    focus_spec = _focus_brief(focus)
+    column_hints = _build_column_hints(prompt, schemas_info)
 
     generator = Agent(
         role="Multi-DataFrame Python Code Generator",
         goal=(
             f"สร้าง Python/Pandas code ที่ merge {n} DataFrame และ print ผลลัพธ์ชัดเจน "
-            "พร้อมชื่อจังหวัดจริง composite score และ ranking Red Zone"
+            "ให้ตอบตาม Target Spec ของคำถามด้วยชื่อพื้นที่จริงและตัวเลขที่ตรวจสอบได้"
         ),
-        backstory=(
+        backstory=join_prompt(
             "คุณเป็น Python/Pandas expert ที่เชี่ยวชาญการวิเคราะห์ข้อมูลสาธารณสุขจากหลาย dataset "
             "คุณใช้ pct_rank() และ composite_score() ที่มีให้อยู่แล้ว "
             "คุณให้ความสำคัญกับ output ที่ชัดเจน: ชื่อจังหวัดต้องแสดงครบ ตัวเลขมี label "
-            "เพื่อให้ AI วิเคราะห์ต่อได้โดยไม่ต้องสร้างข้อมูลขึ้นมาเอง"
+            "เพื่อให้ AI วิเคราะห์ต่อได้โดยไม่ต้องสร้างข้อมูลขึ้นมาเอง",
+            CODE_GENERATOR_CORE_POLICY,
         ),
         llm=llm,
         verbose=False,
@@ -360,25 +505,46 @@ def run_multi_pipeline(
             f"Domains: {domain_names_th}\n\n"
             f"Schemas:\n{schema_summary}\n\n"
             f"Geographic Keys (ตรวจพบอัตโนมัติ):\n{merge_recipe}\n\n"
+            f"Target Spec จากคำถาม (ต้องตอบตามนี้):\n{focus_spec}\n\n"
+            f"Candidate columns ที่น่าจะตรงโจทย์:\n{column_hints}\n\n"
             "==== กฎบังคับ (ห้ามละเมิด) ====\n"
             f"1. โหลดข้อมูล (ห้ามเปลี่ยน file_id):\n{load_block}\n\n"
             "2. ห้าม import minio / redefine load_csv / redefine pct_rank / redefine composite_score\n"
             "3. ห้ามใช้ pd.read_csv() — ใช้ load_csv() เท่านั้น\n"
             "4. ใช้ชื่อ column จาก schema เท่านั้น — ห้ามเดาชื่อ column\n\n"
+            "4.1 ต้องเริ่มจากระบุคอลัมน์ที่เลือกใช้จริงจาก Candidate columns\n"
+            "4.2 ถ้าไม่พบคอลัมน์ที่ตรงโจทย์ ให้ fallback เป็นคอลัมน์ที่ใกล้เคียงที่สุดและพิมพ์เหตุผล\n\n"
+            "4.3 ถ้าโจทย์ระบุช่วงอายุ (เช่น 12-18) แต่ไม่มีคอลัมน์ตรงตัว ให้คำนวณประมาณการจากช่วงใกล้เคียงในไฟล์เดียวกัน\n"
+            "     - ถ้ามี 2 ช่วงที่คร่อมช่วงเป้าหมาย ให้ใช้ interpolation ด้วย midpoint\n"
+            "     - ถ้ามีได้แค่ 1 ช่วง ให้ใช้ nearest-neighbor proxy\n"
+            "     - ต้อง print ว่าเป็น ESTIMATE และบอกช่วงอายุที่ใช้คำนวณ\n\n"
+            "4.4 ถ้าคำถามระบุปี/จังหวัด/อำเภอ/ช่วงอายุ ต้อง filter ให้ตรงก่อน aggregate/merge\n"
+            "     - ห้ามใช้ปีนอกช่วงที่ผู้ใช้ถามในตารางผลลัพธ์หลัก\n"
+            "     - ต้อง print section '=== SCOPE CHECK ===' ระบุช่วงที่ถามและช่วงที่ใช้จริง\n\n"
             "==== Output Format บังคับ ====\n"
             "5. บรรทัดหลัง load: pd.set_option('display.max_rows', 100)\n"
-            "6. ก่อน print ทุก section ใส่หัวข้อ เช่น print('=== Top 10 Red Zone ===')\n"
+            "6. ก่อน print ทุก section ใส่หัวข้อ เช่น print('=== [หัวข้อ] ===')\n"
             "7. ชื่อจังหวัด/พื้นที่ต้องแสดงเป็น text ครบในทุกตาราง\n"
             "8. ใช้ print(df.to_string(index=False)) เพื่อแสดง DataFrame ครบ\n\n"
             "==== ขั้นตอนการวิเคราะห์ ====\n"
+            "a0. เริ่มด้วย print('=== Analysis Plan ===') และพิมพ์สิ่งที่จะหาให้ตรง Target Spec\n"
             "a. โหลด + strip whitespace จาก geo column ทุกตัว\n"
             "b. Rename geo columns ตาม merge recipe\n"
             "c. Aggregate แต่ละ df รายจังหวัด (groupby) ก่อน merge\n"
             "d. Merge ด้วย outer join บน geo key\n"
             "e. composite_score: score = composite_score(df[col1], df[col2], ...)\n"
-            "f. sort_values('score', ascending=False) และ print Top 10\n"
-            "g. print สรุปรายจังหวัดแต่ละ domain แยกกัน\n\n"
-            "ห่อโค้ดทั้งหมดใน ```python ... ```"
+            "f. ถ้า intent มี ranking/red_zone ให้ sort_values('score', ascending=False) และ print Top N จาก top_n\n"
+            "g. ถ้า intent มี trend ให้แสดงแนวโน้มรายปี (เมื่อมีคอลัมน์ปี)\n"
+            "h. ถ้า intent มี comparison ให้สร้างตารางเปรียบเทียบตัวชี้วัดหลัก\n"
+            "i. print สรุปรายจังหวัดแต่ละ domain แยกกัน\n"
+            "j. ถ้าใช้ค่าประมาณ ให้มี section '=== ESTIMATION METHOD ===' อธิบายสูตรและคอลัมน์ที่ใช้\n"
+            "k. ก่อน print ตารางหลัก ให้ rename คอลัมน์เป็นชื่อภาษาไทยอ่านได้สมบูรณ์:\n"
+            "   - ตัวอย่าง: 'เริ่มอ้วน_%_12-18' → 'ร้อยละเด็กเริ่มอ้วน ช่วง 12-18 ปี (ประมาณ)'\n"
+            "   - ตัวอย่าง: 'อ้วน_%_6-14' → 'ร้อยละเด็กอ้วน ช่วง 6-14 ปี'\n"
+            "   - ใช้ df_display = df_result.rename(columns={...}) แล้ว print df_display\n"
+            "l. round ตัวเลขทศนิยมทั้งหมดเป็น 2 ตำแหน่งก่อน print: df_display = df_display.round(2)\n\n"
+            "ห่อโค้ดทั้งหมดใน ```python ... ```\n\n"
+            f"{CODE_GENERATOR_CORE_POLICY}"
         ),
         f"Python code merging {n} DataFrames with labeled output and real province names",
         step="code_gen", domain=domain_names_en, session_id=session_id,
@@ -397,18 +563,61 @@ def run_multi_pipeline(
         exec_output = f"[ข้ามการรัน — code generation ล้มเหลว{auth_hint}]\n{code_result}"
         code = ""
     else:
-        # Multi-file pipeline: use longer timeout (5 files × network I/O)
-        exec_output = exec_python(code, timeout=180)
-        _log_exec_error(exec_output, code, "executor", domain_names_en, session_id, attempt=0)
+        required_lines = [f"df{i} = load_csv('{fid}')" for i, (fid, _) in enumerate(selected_files, 1)]
+        sanitized_code = _sanitize_generated_code(code, required_lines, prompt)
+        code_issues = _find_code_issues(sanitized_code, required_lines, prompt)
+        if not code_issues:
+            code = sanitized_code
 
+        if code_issues:
+            age_scope_hints = _age_scope_repair_hints(prompt, code_issues)
+            repair_result = _run_agent(
+                generator,
+                (
+                    f"คำถาม: {prompt}\n"
+                    f"Schemas:\n{schema_summary}\n\n"
+                    f"Target Spec:\n{focus_spec}\n\n"
+                    f"โค้ดปัจจุบัน:\n```python\n{code}\n```\n\n"
+                    f"Contract violations:\n{chr(10).join(f'- {i}' for i in code_issues)}\n\n"
+                    f"{age_scope_hints}\n"
+                    "แก้โค้ดให้ผ่านกฎ:\n"
+                    f"1. ต้องมีบรรทัดโหลดไฟล์ครบดังนี้:\n{load_block}\n"
+                    "2. ห้าม import/use Minio โดยตรง\n"
+                    "3. ห้ามใช้ pd.read_csv\n"
+                    "4. ห้าม redefine helpers\n"
+                    "5. รักษา logic ตาม Target Spec\n"
+                    "6. ต้องมี '=== SCOPE CHECK ===' และยืนยันช่วงปี/พื้นที่/ช่วงอายุที่ถาม\n"
+                    "7. ถ้าไม่มีคอลัมน์อายุตรงเป้า ให้คำนวณ estimate และติดป้ายช่วงอายุเป้าหมาย\n"
+                    "Wrap code in ```python ... ```"
+                ),
+                "Repaired Python code that passes contract checks",
+                step="code_contract_repair", domain=domain_names_en, session_id=session_id,
+            )
+            repaired_code = _sanitize_generated_code(_extract_code(repair_result), required_lines, prompt)
+            repaired_issues = _find_code_issues(repaired_code, required_lines, prompt)
+            if not repaired_issues:
+                code = repaired_code
+                code_result = repair_result
+            else:
+                exec_output = (
+                    "[ข้ามการรัน — โค้ดยังผิดกติกาหลังพยายามแก้]\n"
+                    f"issues: {', '.join(repaired_issues)}"
+                )
+                code = ""
+
+        if code:
+            # Multi-file pipeline: use longer timeout (5 files × network I/O)
+            exec_output = exec_python(code, timeout=180)
+            _log_exec_error(exec_output, code, "executor", domain_names_en, session_id, attempt=0)
         # Retry once on runtime error — pass geo_keys explicitly
-        if _is_exec_error(exec_output):
+        if code and _is_exec_error(exec_output):
             retry_result = _run_agent(
                 generator,
                 (
                     f"คำถาม: {prompt}\n"
                     f"Schemas:\n{schema_summary}\n"
                     f"Geographic Keys:\n{merge_recipe}\n\n"
+                    f"Target Spec:\n{focus_spec}\n\n"
                     f"โค้ดเดิมที่มี error:\n```python\n{code}\n```\n"
                     f"Error:\n{exec_output}\n\n"
                     "แก้ไขโค้ด:\n"
@@ -422,7 +631,7 @@ def run_multi_pipeline(
                 "Fixed Python code without errors",
                 step="code_gen_retry", domain=domain_names_en, session_id=session_id,
             )
-            retry_code = _extract_code(retry_result)
+            retry_code = _sanitize_generated_code(_extract_code(retry_result), required_lines, prompt)
             if not _is_agent_error(retry_code):
                 retry_output = exec_python(retry_code, timeout=180)
                 _log_exec_error(retry_output, retry_code, "executor_retry", domain_names_en, session_id, attempt=1)
@@ -444,13 +653,14 @@ def run_multi_pipeline(
         role="Cross-Domain Insight Analyst",
         goal=(
             f"วิเคราะห์ผลลัพธ์จริงจากข้อมูล {domain_names_th} "
-            "เพื่อระบุ Red Zone และ pattern ข้ามหลาย domain โดยใช้ข้อมูลจริงเท่านั้น"
+            "และเรียบเรียงรายงานระดับทางการสำหรับผู้บริหาร สสจ. ที่อ่านแล้วตัดสินใจเชิงนโยบายได้ทันที"
         ),
-        backstory=(
-            "คุณเป็นนักวิเคราะห์ข้อมูลสาธารณสุขระดับเขตที่เชี่ยวชาญการมองภาพรวมข้ามหลายมิติ "
-            "คุณเชื่อมโยงข้อมูลจากหลาย domain เพื่อหา pattern และ 'วงจร' ที่ซ่อนอยู่ "
-            "คุณรายงานเฉพาะข้อมูลจริงจาก Execution Result — ไม่สร้างตัวเลขหรือชื่อจังหวัดสมมติ "
-            "ถ้าข้อมูลไม่พอ คุณบอกตรงๆ และอธิบายสิ่งที่ทราบได้จากข้อมูลที่มี"
+        backstory=join_prompt(
+            "คุณเป็นนักวิเคราะห์ข้อมูลสาธารณสุขระดับเขตที่มั่นใจในการวิเคราะห์และตอบตรงประเด็น "
+            "คุณเริ่มรายงานด้วยสิ่งที่ค้นพบจากข้อมูลเสมอ ไม่ขึ้นต้นด้วยข้อแก้ตัวหรือข้อจำกัด "
+            "ถ้าใช้ค่าประมาณ คุณระบุทันทีในตารางว่า 'ค่าประมาณจาก X' แล้ววิเคราะห์ต่อได้เลย "
+            "คุณใช้เฉพาะข้อมูลจาก Execution Result และไม่สร้างตัวเลขหรือชื่อสมมติ",
+            ANALYST_CORE_POLICY,
         ),
         llm=llm,
         verbose=False,
@@ -463,32 +673,35 @@ def run_multi_pipeline(
             f"คำถาม: {prompt}\n"
             f"Domains: {domain_names_th}\n"
             f"ไฟล์ที่ใช้:\n{file_summary}\n\n"
+            f"Target Spec ที่ต้องตอบให้ครบ:\n{focus_spec}\n\n"
             f"ผลการรันโค้ด (Execution Result):\n{exec_output}\n\n"
             "==== กฎเหล็ก — ห้ามละเมิด ====\n"
             "1. ใช้เฉพาะข้อมูลจาก Execution Result ด้านบน\n"
             "2. ห้ามสร้างชื่อจังหวัดสมมติ เช่น 'จังหวัด ก.' 'จังหวัด ข.' 'Province A' — ต้องใช้ชื่อจริงเท่านั้น\n"
             "3. ห้ามสร้างตัวเลข composite score หรือ % ที่ไม่มีในผลลัพธ์\n"
             "4. ถ้า Execution มี error → อธิบาย error + สรุปจากข้อมูลบางส่วนที่ได้ ไม่ต้องสร้างตารางสมมติ\n"
-            "5. ถ้าไม่มีชื่อจังหวัดในผลลัพธ์ → ระบุว่า 'ข้อมูลจากการรันโค้ดไม่ระบุจังหวัดเฉพาะ'\n\n"
-            "==== โครงสร้างรายงาน ====\n\n"
-            "## สรุปภาพรวม\n"
-            "อธิบายสิ่งที่พบจาก Execution Result (2-4 ประโยค)\n\n"
-            "## ตาราง Red Zone / พื้นที่เสี่ยง\n"
-            "ตาราง markdown จากข้อมูลจริงในผลลัพธ์:\n"
-            "| จังหวัด | Composite Score | [metric1] | [metric2] | ... |\n"
-            "|---|---|---|---|---|\n"
-            "| [ชื่อจริงจาก output] | [ค่าจริง] | ... |\n"
-            "หมายเหตุ: ถ้า output ไม่มี composite score ให้ใช้ค่าที่มีในผลลัพธ์แทน\n\n"
-            "## Pattern / วงจรที่พบ\n"
-            "อธิบาย pattern ที่เห็นจากข้อมูล: เช่น พื้นที่ที่มีปัญหาซ้ำซ้อนหลาย domain\n\n"
-            "## Red Zone ที่น่าเป็นห่วงที่สุด\n"
-            "ระบุชื่อจังหวัด/พื้นที่จริงที่ควรได้รับความสนใจ พร้อมตัวเลขอ้างอิงจากผลลัพธ์\n\n"
-            "## ข้อเสนอแนะเชิงนโยบาย\n"
-            "มาตรการที่เหมาะสมสำหรับพื้นที่ Red Zone ที่ระบุ"
+            "5. ถ้าไม่มีชื่อจังหวัดในผลลัพธ์ → ระบุว่า 'ข้อมูลจากการรันโค้ดไม่ระบุจังหวัดเฉพาะ'\n"
+            "6. ถ้าผลลัพธ์เป็นค่าประมาณ (ESTIMATE/PROXY) ให้ติดป้าย *(ประมาณ)* ในหัวคอลัมน์ตารางทันที แล้ววิเคราะห์ต่อได้เลย ห้ามสร้างย่อหน้าแยกต่างหากก่อนตาราง\n"
+            "7. ระบุให้ครบว่าใช้ข้อมูลจากไฟล์/ชุดข้อมูลใดบ้าง และใช้ช่วงปีใดบ้าง ในหัวข้อ ## แหล่งข้อมูล\n"
+            "8. อธิบายวิธีคำนวณใน ## วิธีคำนวณ (1-3 บรรทัดก็พอ)\n"
+            "9. อธิบายความหมายคอลัมน์ใต้ตาราง (1-2 บรรทัด)\n"
+            "10. ถ้าครอบคลุมไม่ครบ ให้ระบุในส่วน ## ข้อจำกัด เท่านั้น ไม่นำมาขึ้นต้นรายงาน\n\n"
+            "==== แนวทางการเขียนรายงาน (สำคัญ) ====\n"
+            "คนอ่านคือผู้อำนวยการ สสจ. — ต้องการรายงานทางการที่อ่านแล้วใช้ตัดสินใจได้ทันที จึงเขียนระดับ:\n"
+            "- สรุปผู้บริหาร: ย่อหน้า 3-5 ประโยคภาษาทางการ เริ่มด้วยตัวเลขหรือ pattern ที่พบทันที ห้ามขึ้นต้น 'เนื่องจากไม่มีข้อมูล'\n"
+            "- ใช้โครงสร้างจาก INSIGHT_RESPONSE_BLUEPRINT เพียงชุดเดียว ห้ามสร้างหัวข้อซ้ำ\n"
+            "- ชื่อคอลัมน์ในตารางต้องเป็นภาษาไทยอ่านได้สมบูรณ์ เช่น 'ร้อยละเด็กเริ่มอ้วน ช่วง 12-18 ปี (ประมาณ)' ไม่ใช่ชื่อตัวแปรดิบ\n"
+            "- ตัวเลขในตารางแสดง 2 ทศนิยม พร้อมหน่วย (%) ถ้าเป็นร้อยละ\n"
+            "- วิธีคำนวณ: ถ้ามีสูตรให้ใช้ LaTeX block วางบรรทัดเดียวโดดๆ เสมอ เช่น:\n\n$$\\hat{{v}} = v_1 + \\frac{{(v_2 - v_1) \\times (t - t_1)}}{{t_2 - t_1}}$$\n\n(ปรับตัวแปรตามจริง) — ห้ามวาง $$...$$ กลางประโยคหรือท้ายบรรทัดธรรมดา\n"
+            "- Insight และข้อเสนอแนะเขียนเป็นย่อหน้าสมบูรณ์ มีตัวเลขอ้างอิง ระบุหน่วยงานที่เกี่ยวข้อง\n"
+            "- ข้อจำกัดเป็นส่วนสุดท้าย ระบุสั้นๆ ไม่ใช่หัวข้อหลัก\n\n"
+            f"{INSIGHT_RESPONSE_BLUEPRINT}\n\n"
+            f"{MISSING_DATA_POLICY}"
         ),
-        "รายงาน insight ภาษาไทยพร้อมตาราง Red Zone จากข้อมูลจริง ชื่อจังหวัดจริง และข้อเสนอแนะ",
+        "รายงานทางการภาษาไทยสำหรับผู้บริหาร สสจ. พร้อมตารางชื่อคอลัมน์อ่านได้ สูตร LaTeX และข้อเสนอแนะเชิงนโยบาย",
         step="insight", domain=domain_names_en, session_id=session_id,
     )
+    insight = _strip_csv_extension_mentions(insight)
     put({"type": "agent_done", "step": "insight",
          "agentName": "Cross-Domain Insight Analyst", "result": insight})
 

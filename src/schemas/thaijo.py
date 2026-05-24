@@ -9,6 +9,22 @@ class ThaiJoRequest(BaseModel):
     doc_type: str = "policy"   # policy | plan | workplan
 
 
+class ThaiJoGenerateRequest(BaseModel):
+    """Request to generate a structured report from already-fetched articles."""
+    sessionId: str = ""
+    query: str
+    articles_text: str
+    doc_type: str = "policy"   # policy | plan | workplan
+    topic_plan: str = ""       # user-selected topics + notes (optional)
+
+
+class ThaiJoTopicsRequest(BaseModel):
+    """Request to generate topic heading suggestions from articles."""
+    query: str
+    articles_text: str
+    doc_type: str = "policy"
+
+
 class ThaiJoArticle(BaseModel):
     """One article returned by ThaiJo API."""
     pdf_url: str = ""

@@ -5,6 +5,9 @@ import os
 import threading
 from typing import Any
 
+# จำกัด 5 AI pipelines พร้อมกันต่อ worker (4 workers = 20 concurrent รวม)
+_AI_SEMAPHORE = threading.BoundedSemaphore(5)
+
 from crewai import Agent, LLM, Crew, Task
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -48,6 +51,25 @@ def _orchestrate(
 
         if session_id:
             append_history(session_id, "user", prompt)
+
+        # ── Memory Agent: แปลง follow-up question ให้ครบถ้วน ─────────────────
+        if history_context:
+            from src.agents.question_resolver import resolve_question
+            put({"type": "agent_start", "step": "memory", "agentName": "Memory Agent"})
+            resolved, was_changed = resolve_question(
+                prompt, history_context, os.getenv("GEMINI_API_KEY", "")
+            )
+            if was_changed:
+                put({
+                    "type": "agent_done", "step": "memory", "agentName": "Memory Agent",
+                    "result": f"ปรับคำถาม: {resolved}",
+                })
+                prompt = resolved  # ← downstream agents ทั้งหมดใช้ resolved prompt
+            else:
+                put({
+                    "type": "agent_done", "step": "memory", "agentName": "Memory Agent",
+                    "result": "คำถามชัดเจน ไม่ต้องปรับ",
+                })
 
         # ── Tavily mode: ให้ Router ตัดสินใจว่าต้องค้น web หรือตอบจากความรู้ ────
         if mode == "tavily":
@@ -192,9 +214,15 @@ def _orchestrate(
         put({"type": "error", "message": str(exc)})
     finally:
         finish()
+        _AI_SEMAPHORE.release()
 
 
 async def _handle_analyze(request: AnalyzeRequest) -> StreamingResponse:
+    if not _AI_SEMAPHORE.acquire(blocking=False):
+        async def busy_stream():
+            yield f"data: {json.dumps({'type': 'error', 'message': 'ระบบกำลังประมวลผลเต็มความสามารถ กรุณารอสักครู่แล้วลองใหม่'}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(busy_stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
+
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     loop = asyncio.get_event_loop()
 

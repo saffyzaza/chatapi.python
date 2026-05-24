@@ -19,18 +19,23 @@ import asyncio
 import json
 import os
 import re
+import time
 from typing import Any
 
 import httpx
 import litellm
 from bs4 import BeautifulSoup
-from crewai import Agent, Crew, LLM, Task
+from crewai import Agent, LLM
 from openai import OpenAI
 
 from src.config import get_settings
-from src.agents.csv_pipeline import _run_agent, _is_agent_error
 from src.tools.error_logger import log_agent_error
-from src.agents.thaijo_prompts import build_prompt, doc_type_label, JOURNAL_CSS
+from src.agents.csv_pipeline import _run_agent, _is_agent_error
+
+
+def _get_llm() -> LLM:
+    import os as _os
+    return LLM(model="gemini/gemini-2.0-flash", api_key=_os.getenv("GEMINI_API_KEY"))
 
 # ── Journal HTML CSS (mirrors journalHtmlStyles.ts) ──────────────────────────
 
@@ -267,55 +272,43 @@ _DEMO_ROUTER_REASONING = (
 )
 
 
-# ── LLM ───────────────────────────────────────────────────────────────────────
-
-def _get_llm() -> LLM:
-    return LLM(model="gemini/gemini-2.0-flash", api_key=os.getenv("GEMINI_API_KEY"))
-
-
 # ── Step 0: Keyword Extractor ─────────────────────────────────────────────
 
-_KEYWORD_SYSTEM = (
-    "You are an expert at searching Thai academic journals in the TCI ThaiJo database. "
-    "The TCI ThaiJo full-text index is in English only — Thai search terms return zero results. "
-    "Always translate topic and location to English medical/academic terminology."
-)
+_KEYWORD_SYSTEM = "คุณเป็นผู้เชี่ยวชาญการค้นหาบทความวิชาการในฐานข้อมูล TCI ThaiJo"
 
-_KEYWORD_PROMPT_TMPL = """From this Thai research question: "{prompt}"
+_KEYWORD_PROMPT_TMPL = """จากคำถาม/หัวข้อต่อไปนี้: "{prompt}"
 
-Extract the best English search keywords for TCI ThaiJo.
+สกัด keyword ภาษาไทยที่เหมาะสมที่สุดสำหรับค้นหาบทความใน TCI ThaiJo
 
-Reply with JSON only — no markdown, no ``` :
+ตอบเป็น JSON เท่านั้น ห้ามมี markdown หรือ ``` :
 {{
-    "term": "2-4 English words, medical/academic terms only",
+    "term": "คำค้นหาภาษาไทย กระชับ ไม่เกิน 4 คำ",
     "page": 1,
     "size": 5,
     "strict": true,
-    "title": false,
+    "title": true,
     "author": false,
     "abstract": true,
-    "reasoning": "why this term was chosen"
+    "reasoning": "เหตุผลที่เลือก keyword นี้"
 }}
 
-Rules:
-- term MUST be in English — the API indexes English content only
-- Translate Thai province names: อุบล→Ubon, เชียงใหม่→Chiang Mai, ขอนแก่น→Khon Kaen, etc.
-- Translate Thai medical terms: ความดันโลหิตสูง→hypertension, เบาหวาน→diabetes, ซึมเศร้า→depression, etc.
-- Keep term short (2-4 words), focus on the core concept
-- author: true only if the prompt names a specific researcher
-- size: 3-8 depending on topic specificity
+กฎ:
+- term ต้องสั้น กระชับ เน้น concept หลัก ไม่เกิน 4 คำ
+- ใช้คำศัพท์ทางการแพทย์/วิชาการภาษาไทย
+- author: true เฉพาะถ้า prompt ระบุชื่อนักวิจัย
+- size: 3-8 ตามความกว้างของหัวข้อ
 
-Examples:
-  "โรคความดันโลหิตสูง จังหวัดอุบล" → term: "hypertension Ubon"
-  "โรคซึมเศร้าในผู้ป่วยเบาหวาน"    → term: "depression diabetes patients"
-  "นโยบายสาธารณสุข ความดันโลหิตสูง" → term: "hypertension public health policy\""""
+ตัวอย่าง:
+  "โรคความดันโลหิตสูงเป็นปัญหาสาธารณสุข จังหวัดอุบล" → term: "ความดันโลหิตสูง อุบลราชธานี"
+  "โรคซึมเศร้าในผู้ป่วยเบาหวาน"                       → term: "ซึมเศร้า เบาหวาน"
+  "นโยบายสาธารณสุข ความดันโลหิตสูง"                   → term: "ความดันโลหิตสูง นโยบาย\""""
 
 
 def _extract_search_payload(prompt: str, gemini_key: str) -> dict:
     """Use Gemini flash to extract English TCI ThaiJo search keyword from Thai prompt."""
     default = {
         "term": prompt, "page": 1, "size": 5,
-        "strict": True, "title": False, "author": False, "abstract": True,
+        "strict": True, "title": True, "author": False, "abstract": True,
         "reasoning": "ใช้ prompt โดยตรง (fallback)",
     }
     if not gemini_key:
@@ -336,7 +329,7 @@ def _extract_search_payload(prompt: str, gemini_key: str) -> dict:
             data.setdefault("page", 1)
             data.setdefault("size", 5)
             data.setdefault("strict", True)
-            data.setdefault("title", False)
+            data.setdefault("title", True)
             data.setdefault("author", False)
             data.setdefault("abstract", True)
             data["size"] = max(1, min(int(data["size"]), 10))
@@ -487,7 +480,7 @@ def fetch_thaijo_articles(payload: dict) -> list[dict]:
         "page":     payload.get("page", 1),
         "size":     size,
         "strict":   payload.get("strict", True),
-        "title":    payload.get("title", False),
+        "title":    payload.get("title", True),
         "author":   payload.get("author", False),
         "abstract": payload.get("abstract", True),
     }
@@ -730,9 +723,129 @@ def run_thaijo_pipeline(
     agent_steps.append({"step": "fetcher", "agentName": "ThaiJo Fetcher",
                         "result": fetcher_result})
 
-    # ── STEP 2: Report Planner ─────────────────────────────────────────────
-    put({"type": "agent_start", "step": "planner", "agentName": "Report Planner"})
+    # ── STEP 2: Insight Analyst (เฉพาะเมื่อพบบทความ) ────────────────────────
+    insight_text = ""
+    if articles:
+        put({"type": "agent_start", "step": "insight", "agentName": "Insight Analyst"})
+        analyst = Agent(
+            role="Insight Analyst",
+            goal="วิเคราะห์บทความวิชาการและสกัด insight สำคัญ",
+            backstory=(
+                "คุณเป็นนักวิเคราะห์ข้อมูลสาธารณสุขอาวุโสที่เชี่ยวชาญการสังเคราะห์งานวิจัย "
+                "คุณสกัด insight เชิงลึก แนวโน้ม และข้อเสนอแนะเบื้องต้นจากบทความที่ค้นพบ"
+            ),
+            llm=llm, verbose=False, max_iter=3,
+        )
+        insight_text = _run_agent(
+            analyst,
+            (
+                f"หัวข้อ: {query_for_plan}\n\n"
+                f"บทความที่ค้นพบ ({article_count} บทความ):\n{articles_text}\n\n"
+                "วิเคราะห์และสกัด insight สำคัญ ตอบเป็นภาษาไทย กระชับ ดังนี้:\n"
+                "1. ประเด็น/แนวโน้มสำคัญที่พบจากงานวิจัย (2-3 ข้อ)\n"
+                "2. ปัจจัยหลักที่เกี่ยวข้อง\n"
+                "3. ข้อเสนอแนะเบื้องต้น\n"
+                "ตอบกระชับ ชัดเจน ไม่เกิน 10 บรรทัด"
+            ),
+            "insight 3 หัวข้อ เป็นภาษาไทย",
+            step="insight", session_id=session_id,
+        )
+        put({"type": "agent_done", "step": "insight", "agentName": "Insight Analyst",
+             "result": insight_text})
+        agent_steps.append({"step": "insight", "agentName": "Insight Analyst",
+                            "result": insight_text})
 
+    # ── STEP 3: Summary Agent ─────────────────────────────────────────────
+    summary_text = f"ค้นหาบทความ ThaiJo สำเร็จ พบ {article_count} บทความ"
+    if articles:
+        put({"type": "agent_start", "step": "summary", "agentName": "Summary Agent"})
+        summarizer = Agent(
+            role="Summary Agent",
+            goal="สรุปสั้นๆ ว่าบทความที่ค้นพบพูดถึงอะไรบ้าง",
+            backstory="คุณสรุปผลการค้นหาบทความวิชาการเป็น 2-3 ประโยคภาษาไทยที่อ่านง่าย",
+            llm=llm, verbose=False, max_iter=2,
+        )
+        summary_text = _run_agent(
+            summarizer,
+            (
+                f"พบ {article_count} บทความสำหรับหัวข้อ: {query_for_plan}\n\n"
+                f"{articles_text[:2000]}\n\n"
+                f"ตอบเป็นภาษาไทย ดังนี้:\n"
+                f"บรรทัดแรก: 'พบ {article_count} บทความ ได้แก่' แล้วระบุชื่อบทความสั้นๆ แต่ละชื่อขึ้นบรรทัดใหม่ด้วย '- '\n"
+                f"จากนั้น 1 ประโยคสรุปว่าบทความเหล่านี้ครอบคลุมประเด็นอะไรบ้าง\n"
+                f"ตอบกระชับ ไม่ยืดเยื้อ"
+            ),
+            "ชื่อบทความ + สรุปสั้น",
+            step="summary", session_id=session_id,
+        )
+        put({"type": "agent_done", "step": "summary", "agentName": "Summary Agent",
+             "result": summary_text})
+        agent_steps.append({"step": "summary", "agentName": "Summary Agent",
+                            "result": summary_text})
+
+    # ── STEP 4: Stream article summaries + insight as text ────────────────
+    keyword_used = search_payload.get("term", prompt) if not use_mock else _DEMO_PROMPT
+    sep_heavy = "═" * 44 + "\n\n"
+    sep_light  = "─" * 44 + "\n\n"
+
+    full_text = f"📚 พบ {article_count} บทความสำหรับ \"{keyword_used}\"\n\n{sep_heavy}"
+    if articles:
+        for i, article in enumerate(articles, 1):
+            summary   = article.get("summary", "")
+            reference = article.get("reference", "")
+            full_text += f"📄 บทความที่ {i}\n{summary}\n\n"
+            if reference:
+                full_text += f"🔗 {reference}\n"
+            full_text += "\n" + sep_light
+        if insight_text:
+            full_text += f"💡 **Insight Analyst**\n{sep_heavy}{insight_text}\n\n"
+    else:
+        full_text += "ไม่พบบทความที่เกี่ยวข้อง กรุณาลองใช้คำค้นหาอื่น\n"
+
+    put({"type": "text_stream_start", "articleCount": article_count})
+
+    chunk_size = 200
+    for start in range(0, len(full_text), chunk_size):
+        put({"type": "text_chunk", "text": full_text[start:start + chunk_size]})
+
+    # ── FINAL EVENT ────────────────────────────────────────────────────────
+    put({
+        "type":         "final",
+        "message":      summary_text,
+        "textResult":   full_text,
+        "articlesText": articles_text,   # raw text สำหรับส่งไป report generator
+        "reportTitle":  query_for_plan,
+        "articleCount": article_count,
+        "agentSteps":   agent_steps,
+    })
+
+
+# ── Report Generator Pipeline (triggered by user action) ─────────────────────
+
+def run_thaijo_report_pipeline(
+    query: str,
+    articles_text: str,
+    queue: asyncio.Queue,
+    loop: asyncio.AbstractEventLoop,
+    doc_type: str = "policy",
+    session_id: str = "",
+    topic_plan: str = "",
+) -> None:
+    """Generate structured report from already-fetched ThaiJo articles.
+    Streams: agent_start/done + generator_chunk + final(reportHtml)
+    """
+    from src.agents.thaijo_prompts import build_prompt, doc_type_label
+
+    llm = _get_llm()
+
+    def put(ev: dict[str, Any]) -> None:
+        asyncio.run_coroutine_threadsafe(queue.put(ev), loop)
+
+    agent_steps: list[dict] = []
+    article_count = articles_text.count("--- บทความที่")
+
+    # ── Report Planner ──────────────────────────────────────────────────────
+    put({"type": "agent_start", "step": "planner", "agentName": "Report Planner"})
     planner = Agent(
         role="ThaiJo Report Planner",
         goal="วางแผนโครงสร้างรายงานวิชาการจากบทความที่ค้นพบ อย่างกระชับ",
@@ -742,40 +855,32 @@ def run_thaijo_pipeline(
         ),
         llm=llm, verbose=False, max_iter=3,
     )
-
     plan = _run_agent(
         planner,
         (
-            f"หัวข้อ: {query_for_plan}\n\n"
-            f"บทความที่พบ ({article_count} บทความ):\n{articles_text}\n\n"
-            "วางแผนโครงสร้างรายงาน (ไม่เกิน 10 บรรทัด):\n"
-            "1. Theme หลัก 3-5 ประเด็น\n"
-            "2. Section ที่ควรมี\n"
-            "3. ข้อมูลสำหรับตาราง\n"
-            "4. ประเด็น discussion สำคัญ"
+            f"หัวข้อ: {query}\n\nข้อมูลบทความ ({article_count} บทความ):\n{articles_text}\n\n"
+            + (f"หัวข้อหลักที่ผู้ใช้เลือก:\n{topic_plan}\n\n" if topic_plan else "")
+            + "วางแผนโครงสร้างรายงาน (ไม่เกิน 10 บรรทัด):\n"
+            "1. Theme หลัก 3-5 ประเด็น\n2. Section ที่ควรมี\n3. ประเด็น discussion"
         ),
         "แผนโครงสร้างรายงานสั้นๆ ไม่เกิน 10 บรรทัด",
         step="planner", session_id=session_id,
     )
-
     put({"type": "agent_done", "step": "planner", "agentName": "Report Planner",
          "result": plan, "docType": doc_type, "docTypeLabel": doc_type_label(doc_type)})
     agent_steps.append({"step": "planner", "agentName": "Report Planner", "result": plan})
 
-    # ── STEP 3: Report Generator (streaming HTML) ────────────────────────────
+    # ── Report Generator (streaming HTML) ───────────────────────────────────
     put({"type": "agent_start", "step": "generator", "agentName": "Report Generator"})
-
-    gen_prompt = build_prompt(doc_type, query_for_plan, plan, articles_text, article_count)
+    gen_prompt = build_prompt(doc_type, query, plan, articles_text, article_count, topic_plan)
     html_parts: list[str] = []
-    stream_error = ""
 
     try:
         stream = litellm.completion(
             model="gemini/gemini-2.5-pro",
             api_key=os.getenv("GEMINI_API_KEY"),
             messages=[{"role": "user", "content": gen_prompt}],
-            stream=True,
-            temperature=0.3,
+            stream=True, temperature=0.3,
         )
         for chunk in stream:
             delta = ""
@@ -785,33 +890,133 @@ def run_thaijo_pipeline(
                 html_parts.append(delta)
                 put({"type": "generator_chunk", "html": delta})
     except Exception as exc:
-        stream_error = str(exc)
-        log_agent_error(stream_error, agent_name="Report Generator",
-                        step="generator", domain="thaijo", prompt=query_for_plan)
+        log_agent_error(str(exc), agent_name="Report Generator",
+                        step="generator", domain="thaijo", prompt=query)
 
     full_html = "".join(html_parts).strip()
-
-    # Strip markdown fences if model wrapped output
     if full_html.startswith("```"):
         full_html = re.sub(r"^```[a-z]*\n?", "", full_html)
         full_html = re.sub(r"\n?```$", "", full_html).strip()
-
     if not full_html or "<html" not in full_html:
-        full_html = _fallback_html(query_for_plan, article_count, articles)
+        full_html = _fallback_html(query, article_count, [])
         put({"type": "generator_chunk", "html": full_html})
 
-    done_msg = f"สร้าง HTML report สำเร็จ ({len(full_html)} ตัวอักษร)"
+    label = doc_type_label(doc_type)
+    done_msg = f"สร้าง {label} สำเร็จ ({len(full_html)} ตัวอักษร)"
     put({"type": "agent_done", "step": "generator", "agentName": "Report Generator",
          "result": done_msg})
-    agent_steps.append({"step": "generator", "agentName": "Report Generator",
-                        "result": done_msg})
+    agent_steps.append({"step": "generator", "agentName": "Report Generator", "result": done_msg})
 
-    # ── FINAL EVENT ────────────────────────────────────────────────────────
+    # ── Extract AI-generated title from HTML ──────────────────────────────
+    title_match = re.search(r'<h2[^>]*class=["\']article-title["\'][^>]*>\s*(.*?)\s*</h2>', full_html, re.IGNORECASE | re.DOTALL)
+    if title_match:
+        report_title = re.sub(r'<[^>]+>', '', title_match.group(1)).strip()
+    else:
+        report_title = query
+
     put({
         "type":         "final",
-        "message":      f"สร้าง journal report จาก {article_count} บทความสำเร็จ",
+        "message":      f"สร้าง{label}จากบทความ ThaiJo สำเร็จ",
         "reportHtml":   full_html,
-        "reportTitle":  query_for_plan,
+        "reportTitle":  report_title,
         "articleCount": article_count,
         "agentSteps":   agent_steps,
     })
+
+
+# ── Topic Planner (sync, non-streaming) ───────────────────────────────────────────────
+
+_FALLBACK_TOPICS: dict[str, list[dict]] = {
+    "policy": [
+        {"id": "1", "title": "บทสรุปผู้บริหาร",                        "desc": "ประเด็นสำคัญและข้อค้นพบหลัก"},
+        {"id": "2", "title": "สถานการณ์และขนาดของปัญหา",           "desc": "ข้อมูลเชิงปริมาณ แนวโน้ม และผลกระทบ"},
+        {"id": "3", "title": "ปัจจัยที่เกี่ยวข้อง (PEST / SWOT)",      "desc": "ปัจจัยด้านการเมือง เศรษฐกิจ สังคม และเทคโนโลยี"},
+        {"id": "4", "title": "นโยบายและมาตรการในปัจจุบัน",         "desc": "สิ่งที่ดำเนินการอยู่ ช่องว่าง และบทเรียนจากต่างประเทศ"},
+        {"id": "5", "title": "ทางเลือกเชิงนโยบาย",                   "desc": "ข้อเสนอทางเลือก 2-3 แนวทาง พร้อมข้อดี-ข้อเสีย"},
+        {"id": "6", "title": "ข้อเสนอแนะและมาตรการ",                "desc": "มาตรการที่แนะนำพร้อมหน่วยงานรับผิดชอบ"},
+    ],
+    "plan": [
+        {"id": "1", "title": "บทวิเคราะห์สถานการณ์ (SWOT)",         "desc": "จุดแข็ง (Strengths), จุดอ่อน (Weaknesses), โอกาส (Opportunities), ภัยคุกคาม (Threats)"},
+        {"id": "2", "title": "บทวิเคราะห์สภาพแวดล้อม (PEST)",    "desc": "ปัจจัยด้านการเมือง เศรษฐกิจ สังคม และเทคโนโลยี"},
+        {"id": "3", "title": "วิสัยทัศน์และพันธกิจ",                   "desc": "ทิศทางองค์กรและเป้าหมายระยะยาว 3-5 ปี"},
+        {"id": "4", "title": "ประเด็นยุทธศาสตร์หลัก",                "desc": "2-4 ยุทธศาสตร์ที่สอดคล้องกับ SWOT และวิสัยทัศน์"},
+        {"id": "5", "title": "เป้าประสงค์และตัวชี้วัด (KPI)",   "desc": "ตัวชี้วัดที่วัดได้จริง ระยะเวลา และเป้าหมายที่ชัดเจน"},
+        {"id": "6", "title": "กลยุทธ์และมาตรการ",                    "desc": "แนวทางปฏิบัติระยะสั้น กลาง ยาว ให้บรรลุเป้าประสงค์"},
+        {"id": "7", "title": "การติดตามและประเมินผล (M&E)",      "desc": "ระบบติดตามผลลัพธ์และประเมินการบรรลุเป้าหมาย"},
+    ],
+    "workplan": [
+        {"id": "1", "title": "วัตถุประสงค์และเป้าหมาย",                "desc": "สิ่งที่ต้องการบรรลุ ตัวชี้วัดความสำเร็จ และกรอบเวลา"},
+        {"id": "2", "title": "PLAN — วางแผนการดำเนินงาน",         "desc": "กิจกรรม ลำดับขั้นตอน ผู้รับผิดชอบ และระยะเวลา (Gantt)"},
+        {"id": "3", "title": "DO — การดำเนินการ",                      "desc": "ขั้นตอนปฏิบัติ สิ่งที่ต้องทำ และผู้รับผิดชอบแต่ละขั้น"},
+        {"id": "4", "title": "CHECK — การตรวจสอบและประเมินผล",   "desc": "KPI ตัวชี้วัด เกณฑ์ประเมิน และรูปแบบการติดตาม"},
+        {"id": "5", "title": "ACT — การปรับปรุงและพัฒนา",        "desc": "แนวทางปรับปรุง แผนพัฒนาต่อเนื่อง และการผนึกขยายผล"},
+        {"id": "6", "title": "งบประมาณและทรัพยากร",                  "desc": "การจัดสรรงบประมาณแต่ละกิจกรรม และการใช้ทรัพยากรอื่น"},
+    ],
+}
+
+
+def run_topic_planner(
+    query: str,
+    articles_text: str,
+    doc_type: str = "policy",
+) -> list[dict]:
+    """ใช้ Gemini สร้างรายการหัวข้อหลักโดยอิงจากบทความ ThaiJo ที่ค้นพบ
+    Returns list of {id, title, desc}
+    """
+    from src.agents.thaijo_prompts import doc_type_label
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+    fallback = _FALLBACK_TOPICS.get(doc_type, _FALLBACK_TOPICS["policy"])
+    if not gemini_key:
+        return fallback
+    doc_label = doc_type_label(doc_type)
+    try:
+        resp = litellm.completion(
+            model="gemini/gemini-2.0-flash",
+            api_key=gemini_key,
+            messages=[
+                {"role": "system", "content": "คุณเป็นผู้เชี่ยวชาญด้านการสังเคราะห์งานวิจัยและเขียนรายงานสาธารณสุข"},
+                {"role": "user", "content": (
+                    f"หัวข้อ: {query}\n"
+                    f"ประเภทรายงาน: {doc_label}\n\n"
+                    f"บทความที่ค้นพบ:\n{articles_text[:3000]}\n\n"
+                    "สร้างรายการหัวข้อหลัก 5-8 หัวข้อสำหรับรายงานนี้ "
+                    "โดยพิจารณาจากเนื้อหาบทความและประเภทรายงาน\n"
+                    + (
+                        "แนะนำให้ใช้กรอบ SWOT และ PEST ในการวิเคราะห์สถานการณ์\n"
+                        if doc_type == "plan" else
+                        "แนะนำให้ใช้วงจร PDCA (Plan-Do-Check-Act) เป็นโครงสร้างหลัก\n"
+                        if doc_type == "workplan" else
+                        "แนะนำให้ใช้กรอบ Policy Brief มาตรฐาน ประกอบด้วยสถานการณ์ปัญหา การวิเคราะห์ PEST และข้อเสนอนโยบาย\n"
+                    )
+                    + "ตอบเป็น JSON array เท่านั้น ห้ามมี markdown หรือ ข้อความอื่น:\n"
+                    '[{"id":"1","title":"ชื่อหัวข้อ","desc":"อธิบายสั้นๆ"}]'
+                )},
+            ],
+            temperature=0.3,
+        )
+        text = resp.choices[0].message.content or ""
+        arr = None
+        try:
+            arr = json.loads(text)
+        except Exception:
+            m = re.search(r'\[.*\]', text, re.DOTALL)
+            if m:
+                try:
+                    arr = json.loads(m.group())
+                except Exception:
+                    pass
+        if isinstance(arr, list) and arr:
+            result = []
+            for i, item in enumerate(arr):
+                if isinstance(item, dict) and "title" in item:
+                    result.append({
+                        "id":    str(item.get("id", i + 1)),
+                        "title": item["title"],
+                        "desc":  item.get("desc", ""),
+                    })
+            if result:
+                return result
+    except Exception as exc:
+        log_agent_error(str(exc), agent_name="Topic Planner",
+                        step="topic_planner", domain="thaijo", prompt=query)
+    return fallback

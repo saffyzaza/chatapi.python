@@ -332,6 +332,101 @@ CSS ใส่ใน <style>:
 ตอบเป็น HTML เท่านั้น เริ่มด้วย <!DOCTYPE html> ห้ามมี text หรือ ``` ก่อนหรือหลัง HTML:"""
 
 
+# ── Custom prompt (user-selected topics from wizard) ─────────────────────────
+
+def build_custom_prompt(
+    query: str,
+    plan: str,
+    articles_text: str,
+    article_count: int,
+    topic_plan: str,
+    doc_type: str,
+) -> str:
+    """สร้าง prompt สำหรับ Gemini โดยใช้หัวข้อที่ผู้ใช้เลือกผ่าน wizard เป็นโครงสร้างหลัก"""
+    _DOC_LABEL = {"policy": "Policy Brief", "plan": "แผนยุทธศาสตร์", "workplan": "แผนปฏิบัติงาน"}
+    _DOC_ROLE  = {
+        "policy":   "นักวิชาการด้านนโยบายสาธารณสุขไทย",
+        "plan":     "นักวางแผนยุทธศาสตร์สาธารณสุขไทย",
+        "workplan": "ผู้จัดการโครงการสาธารณสุขไทย",
+    }
+    _TAG_LABEL = {"policy": "Policy Brief", "plan": "แผนยุทธศาสตร์", "workplan": "แผนงาน/โครงการ"}
+    doc_label  = _DOC_LABEL.get(doc_type, "รายงาน")
+    doc_role   = _DOC_ROLE.get(doc_type, "ผู้เชี่ยวชาญ")
+    tag_label  = _TAG_LABEL.get(doc_type, "รายงาน")
+
+    # Parse "- Title" / "- Title: Note" bullets
+    topics: list[dict] = []
+    for raw in topic_plan.strip().splitlines():
+        line = raw.strip().lstrip("-").strip()
+        if not line:
+            continue
+        if ":" in line:
+            title, note = line.split(":", 1)
+            topics.append({"title": title.strip(), "note": note.strip()})
+        else:
+            topics.append({"title": line, "note": ""})
+
+    if not topics:
+        return ""  # caller falls back to standard prompt
+
+    # Build per-section page instructions
+    section_lines: list[str] = []
+    for i, t in enumerate(topics):
+        note_hint = f"\n   คำแนะนำจากผู้ใช้: {t['note']}" if t["note"] else ""
+        section_lines.append(
+            f"หน้า {i + 2} — {t['title']}:{note_hint}\n"
+            f"  <h3 class=\"section-heading\">{t['title']}</h3>\n"
+            "  เขียนเนื้อหาละเอียด 4-6 ย่อหน้า แต่ละย่อหน้า 4-6 ประโยค "
+            "พร้อมข้อมูลเชิงตัวเลข/งานวิจัยอ้างอิง และ <sup class=\"cite\">[n]</sup>\n"
+            "  เพิ่มตารางหรือกราฟ Chart.js ถ้ามีข้อมูลเชิงปริมาณ\n"
+            f"  <span class=\"page-num\">{i + 2}</span>"
+        )
+
+    sections_text  = "\n\n".join(section_lines)
+    total_pages    = len(topics) + 2  # cover + sections + references
+
+    return f"""คุณคือ{doc_role} เขียน{doc_label}ฉบับสมบูรณ์ระดับมืออาชีพ อย่างน้อย {total_pages} หน้า A4
+
+หัวข้อ: {query}
+ประเภทเอกสาร: {doc_label}
+
+หัวข้อที่ผู้ใช้กำหนด (ต้องปฏิบัติตามอย่างเคร่งครัด):
+{topic_plan}
+
+แนวทางเพิ่มเติมจาก AI Planner:
+{plan}
+
+บทความที่ค้นพบ ({article_count} บทความ):
+{articles_text}
+
+{_BASE_RULES}
+
+โครงสร้างที่ MUST ใช้ — สร้าง {total_pages} <div class="page"> แยกกัน:
+
+หน้า 1 — ปกและบทสรุปผู้บริหาร:
+  <span class="tag-research">{tag_label}</span>
+  <h2 class="article-title">ชื่อ{doc_label}ภาษาไทย — {query}</h2>
+  <p class="authors">ผู้จัดทำ / หน่วยงาน</p>
+  <hr class="divider">
+  <div class="exec-box"><p class="exec-label">บทสรุปผู้บริหาร</p>สรุปประเด็นสำคัญที่ครอบคลุมทุกหัวข้อที่เลือก 5-6 ประโยค</div>
+  <span class="page-num">1</span>
+
+{sections_text}
+
+หน้า {total_pages} — เอกสารอ้างอิง:
+  <h3 class="section-heading">เอกสารอ้างอิง</h3>
+  <ol class="ref-list">อ้างอิงทุกบทความพร้อม URL</ol>
+  <span class="page-num">{total_pages}</span>
+
+CSS ใส่ใน <style>:
+{JOURNAL_CSS}
+
+ใน <head>:
+{_HEAD_SCRIPT}
+
+ตอบเป็น HTML เท่านั้น เริ่มด้วย <!DOCTYPE html> ห้ามมี text หรือ ``` ก่อนหรือหลัง HTML:"""
+
+
 # ── Factory ───────────────────────────────────────────────────────────────────
 
 DOC_TYPES = {
@@ -349,7 +444,14 @@ def build_prompt(
     plan: str,
     articles_text: str,
     article_count: int,
+    topic_plan: str = "",
 ) -> str:
+    # When the user picked specific topics via wizard, use the custom prompt
+    if topic_plan:
+        custom = build_custom_prompt(query, plan, articles_text, article_count, topic_plan, doc_type)
+        if custom:
+            return custom
+    # Otherwise fall back to the fixed document-type template
     _, builder = DOC_TYPES.get(doc_type, DOC_TYPES[DEFAULT_DOC_TYPE])
     return builder(query, plan, articles_text, article_count)
 
