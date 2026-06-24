@@ -6,6 +6,8 @@
 -- SHARED DIMENSIONS
 -- ────────────────────────────────────────────────────────────────────────────
 
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 CREATE TABLE IF NOT EXISTS dim_geography (
     geography_id    BIGSERIAL PRIMARY KEY,
     country_code    VARCHAR(10)  DEFAULT 'TH',
@@ -338,3 +340,54 @@ VALUES (
   'adminsuper',
   'approved'
 );
+INSERT INTO accounts (name, email, password_hash, role, status) VALUES
+('musya01', 'musya01@gmail.com', crypt('1234musya01', gen_salt('bf', 12)), 'user', 'approved'),
+('musya02', 'musya02@gmail.com', crypt('1234musya02', gen_salt('bf', 12)), 'user', 'approved'),
+('musya03', 'musya03@gmail.com', crypt('1234musya03', gen_salt('bf', 12)), 'user', 'approved'),
+('musya04', 'musya04@gmail.com', crypt('1234musya04', gen_salt('bf', 12)), 'user', 'approved'),
+('musya05', 'musya05@gmail.com', crypt('1234musya05', gen_salt('bf', 12)), 'user', 'approved'),
+('musya06', 'musya06@gmail.com', crypt('1234musya06', gen_salt('bf', 12)), 'user', 'approved'),
+('musya07', 'musya07@gmail.com', crypt('1234musya07', gen_salt('bf', 12)), 'user', 'approved'),
+('musya08', 'musya08@gmail.com', crypt('1234musya08', gen_salt('bf', 12)), 'user', 'approved'),
+('musya09', 'musya09@gmail.com', crypt('1234musya09', gen_salt('bf', 12)), 'user', 'approved'),
+('musya10', 'musya10@gmail.com', crypt('1234musya10', gen_salt('bf', 12)), 'user', 'approved'),
+('musya11', 'musya11@gmail.com', crypt('1234musya11', gen_salt('bf', 12)), 'user', 'approved'),
+('musya12', 'musya12@gmail.com', crypt('1234musya12', gen_salt('bf', 12)), 'user', 'approved'),
+('musya13', 'musya13@gmail.com', crypt('1234musya13', gen_salt('bf', 12)), 'user', 'approved'),
+('musya14', 'musya14@gmail.com', crypt('1234musya14', gen_salt('bf', 12)), 'user', 'approved'),
+('musya15', 'musya15@gmail.com', crypt('1234musya15', gen_salt('bf', 12)), 'user', 'approved'),
+('musya16', 'musya16@gmail.com', crypt('1234musya16', gen_salt('bf', 12)), 'user', 'approved'),
+('musya17', 'musya17@gmail.com', crypt('1234musya17', gen_salt('bf', 12)), 'user', 'approved'),
+('musya18', 'musya18@gmail.com', crypt('1234musya18', gen_salt('bf', 12)), 'user', 'approved'),
+('musya19', 'musya19@gmail.com', crypt('1234musya19', gen_salt('bf', 12)), 'user', 'approved'),
+('musya20', 'musya20@gmail.com', crypt('1234musya20', gen_salt('bf', 12)), 'user', 'approved'),
+('musya21', 'musya21@gmail.com', crypt('1234musya21', gen_salt('bf', 12)), 'user', 'approved'),
+('musya22', 'musya22@gmail.com', crypt('1234musya22', gen_salt('bf', 12)), 'user', 'approved'),
+('musya23', 'musya23@gmail.com', crypt('1234musya23', gen_salt('bf', 12)), 'user', 'approved'),
+('musya24', 'musya24@gmail.com', crypt('1234musya24', gen_salt('bf', 12)), 'user', 'approved'),
+('musya25', 'musya25@gmail.com', crypt('1234musya25', gen_salt('bf', 12)), 'user', 'approved'),
+('musya26', 'musya26@gmail.com', crypt('1234musya26', gen_salt('bf', 12)), 'user', 'approved'),
+('musya27', 'musya27@gmail.com', crypt('1234musya27', gen_salt('bf', 12)), 'user', 'approved'),
+('musya28', 'musya28@gmail.com', crypt('1234musya28', gen_salt('bf', 12)), 'user', 'approved'),
+('musya29', 'musya29@gmail.com', crypt('1234musya29', gen_salt('bf', 12)), 'user', 'approved'),
+('musya30', 'musya30@gmail.com', crypt('1234musya30', gen_salt('bf', 12)), 'user', 'approved'),
+('musya31', 'musya31@gmail.com', crypt('1234musya31', gen_salt('bf', 12)), 'user', 'approved'),
+('musya32', 'musya32@gmail.com', crypt('1234musya32', gen_salt('bf', 12)), 'user', 'approved'),
+('musya33', 'musya33@gmail.com', crypt('1234musya33', gen_salt('bf', 12)), 'user', 'approved'),
+('musya34', 'musya34@gmail.com', crypt('1234musya34', gen_salt('bf', 12)), 'user', 'approved'),
+('musya35', 'musya35@gmail.com', crypt('1234musya35', gen_salt('bf', 12)), 'user', 'approved'),
+('musya36', 'musya36@gmail.com', crypt('1234musya36', gen_salt('bf', 12)), 'user', 'approved'),
+('musya37', 'musya37@gmail.com', crypt('1234musya37', gen_salt('bf', 12)), 'user', 'approved'),
+('musya38', 'musya38@gmail.com', crypt('1234musya38', gen_salt('bf', 12)), 'user', 'approved'),
+('musya39', 'musya39@gmail.com', crypt('1234musya39', gen_salt('bf', 12)), 'user', 'approved'),
+('musya40', 'musya40@gmail.com', crypt('1234musya40', gen_salt('bf', 12)), 'user', 'approved'),
+('musya41', 'musya41@gmail.com', crypt('1234musya41', gen_salt('bf', 12)), 'user', 'approved'),
+('musya42', 'musya42@gmail.com', crypt('1234musya42', gen_salt('bf', 12)), 'user', 'approved'),
+('musya43', 'musya43@gmail.com', crypt('1234musya43', gen_salt('bf', 12)), 'user', 'approved'),
+('musya44', 'musya44@gmail.com', crypt('1234musya44', gen_salt('bf', 12)), 'user', 'approved'),
+('musya45', 'musya45@gmail.com', crypt('1234musya45', gen_salt('bf', 12)), 'user', 'approved'),
+('musya46', 'musya46@gmail.com', crypt('1234musya46', gen_salt('bf', 12)), 'user', 'approved'),
+('musya47', 'musya47@gmail.com', crypt('1234musya47', gen_salt('bf', 12)), 'user', 'approved'),
+('musya48', 'musya48@gmail.com', crypt('1234musya48', gen_salt('bf', 12)), 'user', 'approved'),
+('musya49', 'musya49@gmail.com', crypt('1234musya49', gen_salt('bf', 12)), 'user', 'approved'),
+('musya50', 'musya50@gmail.com', crypt('1234musya50', gen_salt('bf', 12)), 'user', 'approved');

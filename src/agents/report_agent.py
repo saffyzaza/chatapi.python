@@ -58,6 +58,7 @@ def run_report_pipeline(
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
     session_id: str = "",
+    history_context: str = "",
 ) -> None:
     """Run the comprehensive report generation pipeline.
 
@@ -279,9 +280,11 @@ def run_report_pipeline(
         verbose=False,
         max_iter=5,
     )
+    history_section = f"{history_context}\n\n" if history_context else ""
     report = _run_agent(
         writer,
         (
+            f"{history_section}"
             f"หัวข้อรายงาน: {prompt}\n"
             f"Dataset: {file_result}\n\n"
             f"ผลการวิเคราะห์ข้อมูล (Execution Result):\n{exec_output}\n\n"

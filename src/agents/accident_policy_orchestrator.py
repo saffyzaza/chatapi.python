@@ -34,11 +34,13 @@ def _get_llm(tier: str = "fast") -> LLM:
     if tier == "pro":
         return LLM(
             model=f"gemini/{s.GEMINI_MODEL_PRO}",
+            api_key=s.GEMINI_API_KEY,
             temperature=0.3,
             max_tokens=s.REPORT_MAX_TOKENS,
         )
     return LLM(
         model=f"gemini/{s.GEMINI_MODEL}",
+        api_key=s.GEMINI_API_KEY,
         temperature=0.2,
         max_tokens=4096,
     )

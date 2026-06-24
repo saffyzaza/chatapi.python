@@ -38,11 +38,21 @@ def _stream_response(queue: asyncio.Queue) -> StreamingResponse:
 
 # ── POST /api/compare ──────────────────────────────────────────────────────────
 
+def _build_history_context(session_id: str, client_history: list | None) -> str:
+    """Merge client-sent history with Redis history, return formatted context string."""
+    from src.history import get_history, build_history_context
+    raw = client_history or get_history(session_id)
+    if raw and raw[-1].get("role") in ("user", "human"):
+        raw = raw[:-1]
+    return build_history_context(raw)
+
+
 def _thread_compare(
     prompt: str,
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
     session_id: str = "",
+    history_context: str = "",
 ) -> None:
     from src.agents.compare_agent import run_compare_pipeline
     try:
@@ -51,6 +61,7 @@ def _thread_compare(
             queue=queue,
             loop=loop,
             session_id=session_id,
+            history_context=history_context,
         )
     except Exception as exc:
         asyncio.run_coroutine_threadsafe(
@@ -65,10 +76,12 @@ async def compare_datasets(request: CompareRequest) -> StreamingResponse:
     """Stream comparison analysis pipeline between two CSV datasets."""
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     loop = asyncio.get_event_loop()
+    client_history = [{"role": m["role"], "text": m.get("text", "")} for m in (request.history or [])]
+    history_context = _build_history_context(request.sessionId, client_history or None)
 
     threading.Thread(
         target=_thread_compare,
-        args=(request.prompt, queue, loop, request.sessionId),
+        args=(request.prompt, queue, loop, request.sessionId, history_context),
         daemon=True,
     ).start()
 
@@ -82,6 +95,7 @@ def _thread_report(
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
     session_id: str = "",
+    history_context: str = "",
 ) -> None:
     from src.agents.report_agent import run_report_pipeline
     try:
@@ -90,6 +104,7 @@ def _thread_report(
             queue=queue,
             loop=loop,
             session_id=session_id,
+            history_context=history_context,
         )
     except Exception as exc:
         asyncio.run_coroutine_threadsafe(
@@ -104,10 +119,12 @@ async def generate_report(request: ReportRequest) -> StreamingResponse:
     """Stream comprehensive Thai Markdown report generation from a CSV dataset."""
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     loop = asyncio.get_event_loop()
+    client_history = [{"role": m["role"], "text": m.get("text", "")} for m in (request.history or [])]
+    history_context = _build_history_context(request.sessionId, client_history or None)
 
     threading.Thread(
         target=_thread_report,
-        args=(request.prompt, queue, loop, request.sessionId),
+        args=(request.prompt, queue, loop, request.sessionId, history_context),
         daemon=True,
     ).start()
 
@@ -122,6 +139,7 @@ def _thread_workplan(
     loop: asyncio.AbstractEventLoop,
     session_id: str = "",
     doc_type: str = "workplan",
+    history_context: str = "",
 ) -> None:
     from src.agents.workplan_agent import run_workplan_pipeline
     try:
@@ -131,6 +149,7 @@ def _thread_workplan(
             loop=loop,
             session_id=session_id,
             doc_type=doc_type,
+            history_context=history_context,
         )
     except Exception as exc:
         asyncio.run_coroutine_threadsafe(
@@ -145,10 +164,12 @@ async def generate_workplan(request: WorkplanRequest) -> StreamingResponse:
     """Stream Thai work plan HTML generation (pure LLM, no CSV needed)."""
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     loop = asyncio.get_event_loop()
+    client_history = [{"role": m["role"], "text": m.get("text", "")} for m in (request.history or [])]
+    history_context = _build_history_context(request.sessionId, client_history or None)
 
     threading.Thread(
         target=_thread_workplan,
-        args=(request.prompt, queue, loop, request.sessionId, request.doc_type),
+        args=(request.prompt, queue, loop, request.sessionId, request.doc_type, history_context),
         daemon=True,
     ).start()
 
@@ -163,6 +184,7 @@ def _thread_database(
     loop: asyncio.AbstractEventLoop,
     session_id: str = "",
     attached_files: list[dict] = [],
+    history_context: str = "",
 ) -> None:
     from src.agents.database_agent import run_database_pipeline
     try:
@@ -172,6 +194,7 @@ def _thread_database(
             loop=loop,
             session_id=session_id,
             attached_files=attached_files,
+            history_context=history_context,
         )
     except Exception as exc:
         asyncio.run_coroutine_threadsafe(
@@ -186,10 +209,12 @@ async def analyze_database_file(request: DatabaseRequest) -> StreamingResponse:
     """Stream analysis pipeline for user-attached MinIO files."""
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     loop = asyncio.get_event_loop()
+    client_history = [{"role": m["role"], "text": m.get("text", "")} for m in (request.history or [])]
+    history_context = _build_history_context(request.sessionId, client_history or None)
 
     threading.Thread(
         target=_thread_database,
-        args=(request.prompt, queue, loop, request.sessionId, request.attached_files),
+        args=(request.prompt, queue, loop, request.sessionId, request.attached_files, history_context),
         daemon=True,
     ).start()
 

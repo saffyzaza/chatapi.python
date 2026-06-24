@@ -155,6 +155,7 @@ def run_workplan_pipeline(
     loop: asyncio.AbstractEventLoop,
     session_id: str = "",
     doc_type: str = "workplan",
+    history_context: str = "",
 ) -> None:
     """Run the work plan generation pipeline (pure LLM, no CSV needed).
 
@@ -188,9 +189,11 @@ def run_workplan_pipeline(
     doc_labels = {"workplan": "แผนปฏิบัติการ", "plan": "แผนยุทธศาสตร์", "policy": "แผนนโยบาย"}
     doc_label = doc_labels.get(doc_type, "แผนงาน")
 
+    history_section = f"{history_context}\n\n" if history_context else ""
     plan_structure = _run_agent(
         analyzer,
         (
+            f"{history_section}"
             f"หัวข้อ: {prompt}\n"
             f"ประเภทเอกสาร: {doc_label}\n\n"
             f"วิเคราะห์และสรุปโครงสร้าง{doc_label}นี้ (ไม่เกิน 20 บรรทัด):\n"

@@ -34,10 +34,22 @@ def _thread_pipeline(prompt: str, queue: asyncio.Queue,
                      session_id: str = "", use_mock: bool = False,
                      doc_type: str = "policy") -> None:
     from src.agents.thaijo_agent import run_thaijo_pipeline
+
+    # ⚠️ ดึง "ความจำการสนทนา" จาก session เดียวกับหน้าแชทหลัก แล้วส่งต่อให้ pipeline —
+    # ผู้ใช้อาจสลับโหมดมาที่ ThaiJo จากบทสนทนาเดิม (sessionId เดียวกัน) ถ้าไม่ส่ง
+    # history ไปด้วย คำถามตามหลัง (follow-up) ในโหมดนี้จะถูกประมวลผลแบบเริ่มนับหนึ่ง
+    # ใหม่ทุกครั้ง ไม่ต่อเนื่องแบบ Gemini/ChatGPT (ใช้ pattern เดียวกับ _orchestrate
+    # ใน analyze.py ที่คำนวณ history_context ก่อนเรียก pipeline ทุกตัว)
+    history_context = ""
+    if session_id:
+        from src.history import get_history, build_history_context
+        history_context = build_history_context(get_history(session_id))
+
     try:
         run_thaijo_pipeline(
             prompt=prompt, queue=queue, loop=loop,
             session_id=session_id, use_mock=use_mock, doc_type=doc_type,
+            history_context=history_context,
         )
     except Exception as exc:
         asyncio.run_coroutine_threadsafe(

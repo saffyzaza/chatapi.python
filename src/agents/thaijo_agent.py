@@ -1,4 +1,4 @@
-"""ThaiJo Research Agent — CrewAI + Gemini pipeline.
+﻿"""ThaiJo Research Agent — CrewAI + Gemini pipeline.
 
 Flow:
   [Step 1] ThaiJo Fetcher     — httpx GET → JSON articles
@@ -35,7 +35,7 @@ from src.agents.csv_pipeline import _run_agent, _is_agent_error
 
 def _get_llm() -> LLM:
     import os as _os
-    return LLM(model="gemini/gemini-2.0-flash", api_key=_os.getenv("GEMINI_API_KEY"))
+    return LLM(model="gemini/gemini-2.5-flash-lite", api_key=_os.getenv("GEMINI_API_KEY"))
 
 # ── Journal HTML CSS (mirrors journalHtmlStyles.ts) ──────────────────────────
 
@@ -282,10 +282,10 @@ _KEYWORD_PROMPT_TMPL = """จากคำถาม/หัวข้อต่อ�
 
 ตอบเป็น JSON เท่านั้น ห้ามมี markdown หรือ ``` :
 {{
-    "term": "คำค้นหาภาษาไทย กระชับ ไม่เกิน 4 คำ",
+    "term": "คำค้นหาภาษาไทย กระชับ ไม่เกิน 5 คำ",
     "page": 1,
-    "size": 5,
-    "strict": true,
+    "size": 8,
+    "strict": false,
     "title": true,
     "author": false,
     "abstract": true,
@@ -293,15 +293,19 @@ _KEYWORD_PROMPT_TMPL = """จากคำถาม/หัวข้อต่อ�
 }}
 
 กฎ:
-- term ต้องสั้น กระชับ เน้น concept หลัก ไม่เกิน 4 คำ
+- term ต้องสั้น กระชับ เน้น concept หลัก ไม่เกิน 5 คำ
+- ถ้า prompt มีคำว่า "นโยบาย" หรือ "มาตรการ" ให้รักษาคำนั้นไว้ใน term ด้วย
 - ใช้คำศัพท์ทางการแพทย์/วิชาการภาษาไทย
 - author: true เฉพาะถ้า prompt ระบุชื่อนักวิจัย
-- size: 3-8 ตามความกว้างของหัวข้อ
+- size: 5-10 ตามความกว้างของหัวข้อ
+- strict: false เสมอ เพื่อให้ได้ผลลัพธ์กว้างขึ้น
 
 ตัวอย่าง:
-  "โรคความดันโลหิตสูงเป็นปัญหาสาธารณสุข จังหวัดอุบล" → term: "ความดันโลหิตสูง อุบลราชธานี"
-  "โรคซึมเศร้าในผู้ป่วยเบาหวาน"                       → term: "ซึมเศร้า เบาหวาน"
-  "นโยบายสาธารณสุข ความดันโลหิตสูง"                   → term: "ความดันโลหิตสูง นโยบาย\""""
+  "โรคความดันโลหิตสูงเป็นปัญหาสาธารณสุข จังหวัดอุบล"   → term: "ความดันโลหิตสูง อุบลราชธานี"
+  "โรคซึมเศร้าในผู้ป่วยเบาหวาน"                         → term: "ซึมเศร้า เบาหวาน"
+  "นโยบายสาธารณสุข ความดันโลหิตสูง"                     → term: "ความดันโลหิตสูง นโยบาย"
+  "นโยบายลดอุบัติเหตุทางถนน จังหวัดอุบลราชธานี 10 ปี"  → term: "อุบัติเหตุทางถนน นโยบาย อุบลราชธานี"
+  "มาตรการป้องกันโรคไม่ติดต่อเรื้อรัง"                   → term: "โรคไม่ติดต่อ มาตรการ\""""
 
 
 def _extract_search_payload(prompt: str, gemini_key: str) -> dict:
@@ -315,7 +319,7 @@ def _extract_search_payload(prompt: str, gemini_key: str) -> dict:
         return default
     try:
         resp = litellm.completion(
-            model="gemini/gemini-2.0-flash",
+            model="gemini/gemini-2.5-flash-lite",
             api_key=gemini_key,
             messages=[
                 {"role": "system", "content": _KEYWORD_SYSTEM},
@@ -341,6 +345,13 @@ def _extract_search_payload(prompt: str, gemini_key: str) -> dict:
 
 
 # ── Step 1: ThaiJo Fetcher ─────────────────────────────────────────────────
+
+# Patterns that identify non-research articles (editorials, indexes, announcements)
+_IRRELEVANT_TITLE_RE = re.compile(
+    r"\u0e1a\u0e23\u0e23\u0e13\u0e32\u0e18\u0e34\u0e01\u0e32\u0e23|\u0e2a\u0e32\u0e23\u0e1a\u0e31\u0e0d|\u0e1b\u0e01\u0e2b\u0e19\u0e49\u0e32|\u0e1b\u0e01\u0e27\u0e32\u0e23\u0e2a\u0e32\u0e23|\u0e04\u0e33\u0e41\u0e19\u0e30\u0e19\u0e33\u0e1c\u0e39\u0e49\u0e41\u0e15\u0e48\u0e07|\u0e01\u0e2d\u0e07\u0e1a\u0e23\u0e23\u0e13\u0e32\u0e18\u0e34\u0e01\u0e32\u0e23"
+    r"|\u0e43\u0e1a\u0e2a\u0e21\u0e31\u0e04\u0e23|\u0e41\u0e1a\u0e1a\u0e2a\u0e21\u0e31\u0e04\u0e23\u0e2a\u0e21\u0e32\u0e0a\u0e34\u0e01|\u0e1b\u0e23\u0e30\u0e01\u0e32\u0e28\u0e23\u0e31\u0e1a\u0e2a\u0e21\u0e31\u0e04\u0e23|editor(?:ial)?",
+    re.IGNORECASE,
+)
 
 _THAIJO_API_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; thaijo-api/1.0)",
@@ -509,6 +520,11 @@ def fetch_thaijo_articles(payload: dict) -> list[dict]:
         # ── Prefer Thai content, fall back to English ──────────────────────
         title_th = (result.get("title", {}).get("th_TH") or
                     result.get("title", {}).get("en_US") or "")
+
+        # Skip non-research articles (editorials, indexes, announcements)
+        if _IRRELEVANT_TITLE_RE.search(title_th):
+            continue
+
         abstract_th = (result.get("abstract_clean", {}).get("th_TH") or
                        result.get("abstract_clean", {}).get("en_US") or "")
 
@@ -641,13 +657,20 @@ def run_thaijo_pipeline(
     session_id: str = "",
     use_mock: bool = False,          # ← True = ใช้ mock articles แทนการ GET จริง
     doc_type: str = "policy",        # ← policy | plan | workplan
+    history_context: str = "",       # ← ประวัติการสนทนาก่อนหน้า (ดู docstring ด้านล่าง)
 ) -> None:
     """Stream ThaiJo research pipeline via SSE queue (Gemini).
 
     Args:
         use_mock: ถ้า True ให้ข้ามการ GET ThaiJo API และใช้ _MOCK_ARTICLES แทน
+        history_context: ข้อความสรุปประวัติการสนทนาก่อนหน้า (จาก build_history_context)
+            ส่งให้ Insight Analyst / Summary Agent ใช้เขียนคำอธิบายให้ต่อเนื่องกับ
+            บทสนทนาเดิมแบบ Gemini/ChatGPT แทนที่จะเริ่มอธิบายใหม่ทุกครั้งที่ถามต่อ
+            (เป็น pattern เดียวกับที่ใช้ใน csv_pipeline.py / accident_chat_orchestrator.py
+            — ดูคอมเมนต์ที่ history_section ถูกประกอบขึ้นด้านล่าง)
     """
     llm = _get_llm()
+    history_section = f"{history_context}\n\n" if history_context else ""
 
     def put(ev: dict[str, Any]) -> None:
         asyncio.run_coroutine_threadsafe(queue.put(ev), loop)
@@ -739,13 +762,18 @@ def run_thaijo_pipeline(
         insight_text = _run_agent(
             analyst,
             (
+                f"{history_section}"
                 f"หัวข้อ: {query_for_plan}\n\n"
                 f"บทความที่ค้นพบ ({article_count} บทความ):\n{articles_text}\n\n"
                 "วิเคราะห์และสกัด insight สำคัญ ตอบเป็นภาษาไทย กระชับ ดังนี้:\n"
                 "1. ประเด็น/แนวโน้มสำคัญที่พบจากงานวิจัย (2-3 ข้อ)\n"
                 "2. ปัจจัยหลักที่เกี่ยวข้อง\n"
                 "3. ข้อเสนอแนะเบื้องต้น\n"
-                "ตอบกระชับ ชัดเจน ไม่เกิน 10 บรรทัด"
+                "ตอบกระชับ ชัดเจน ไม่เกิน 10 บรรทัด\n"
+                "(ถ้ามี \"ประวัติการสนทนาก่อนหน้า\" แนบมาด้วย — พิจารณาว่าหัวข้อนี้ "
+                "ต่อยอด/เกี่ยวข้องกับเรื่องที่เคยคุยกันไปก่อนหน้าหรือไม่ แล้วเขียน "
+                "insight ให้ลื่นไหลต่อเนื่องเหมือนบทสนทนาจริง อย่าเริ่มอธิบายซ้ำ "
+                "ตั้งแต่ต้นใหม่ทั้งหมด)"
             ),
             "insight 3 หัวข้อ เป็นภาษาไทย",
             step="insight", session_id=session_id,
@@ -768,12 +796,16 @@ def run_thaijo_pipeline(
         summary_text = _run_agent(
             summarizer,
             (
+                f"{history_section}"
                 f"พบ {article_count} บทความสำหรับหัวข้อ: {query_for_plan}\n\n"
                 f"{articles_text[:2000]}\n\n"
                 f"ตอบเป็นภาษาไทย ดังนี้:\n"
                 f"บรรทัดแรก: 'พบ {article_count} บทความ ได้แก่' แล้วระบุชื่อบทความสั้นๆ แต่ละชื่อขึ้นบรรทัดใหม่ด้วย '- '\n"
                 f"จากนั้น 1 ประโยคสรุปว่าบทความเหล่านี้ครอบคลุมประเด็นอะไรบ้าง\n"
-                f"ตอบกระชับ ไม่ยืดเยื้อ"
+                f"ตอบกระชับ ไม่ยืดเยื้อ\n"
+                f"(ถ้ามี \"ประวัติการสนทนาก่อนหน้า\" แนบมาด้วย — ให้เขียนสรุปนี้ต่อเนื่อง"
+                f"กับบทสนทนาเดิมอย่างเป็นธรรมชาติ เช่น เกริ่นสั้น ๆ ว่าเป็นการค้นต่อ/"
+                f"เพิ่มเติมจากหัวข้อก่อนหน้า ถ้าหัวข้อเกี่ยวข้องกัน — ไม่ต้องทักทายซ้ำ)"
             ),
             "ชื่อบทความ + สรุปสั้น",
             step="summary", session_id=session_id,
@@ -971,7 +1003,7 @@ def run_topic_planner(
     doc_label = doc_type_label(doc_type)
     try:
         resp = litellm.completion(
-            model="gemini/gemini-2.0-flash",
+            model="gemini/gemini-2.5-flash-lite",
             api_key=gemini_key,
             messages=[
                 {"role": "system", "content": "คุณเป็นผู้เชี่ยวชาญด้านการสังเคราะห์งานวิจัยและเขียนรายงานสาธารณสุข"},

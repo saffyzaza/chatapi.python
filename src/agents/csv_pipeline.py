@@ -1,4 +1,4 @@
-"""CSV analysis pipeline — 6-step agent pipeline for health domains d0, d2–d8."""
+﻿"""CSV analysis pipeline — 6-step agent pipeline for health domains d0, d2–d4."""
 import asyncio
 import os
 import re
@@ -21,16 +21,71 @@ from src.tools.minio import (
     read_csv_schema,
     execute_python_code,
     list_csv_files_impl,
+    list_csv_tree_impl,
+    _load_path_index,
     resolve_file_id,
     fallback_find_file,
     read_csv_schema_impl,
     exec_python,
 )
 
+def _keyword_select(prompt: str, combined_text: str, max_n: int) -> list[str]:
+    """Keyword-score CSV file lines and return top-N matches."""
+    lines = [ln.strip() for ln in combined_text.split("\n") if ln.strip() and "[ID:" in ln]
+    if not lines:
+        return []
+    words = set(re.sub(r"[^\w\s]", " ", prompt.lower()).split())
+
+    def score(line: str) -> int:
+        ll = line.lower()
+        return sum(1 for w in words if len(w) > 2 and w in ll)
+
+    return sorted(lines, key=score, reverse=True)[:max_n]
+
+
+def _resolve_folders_to_files(
+    chosen_names: list[str],
+    path_index: dict,
+    max_n: int,
+) -> list[tuple[str, str]]:
+    """แปลงชื่อโฟลเดอร์ที่ agent เลือก → (file_id, display_line) แบบ deterministic."""
+    items = list(path_index.items())
+    if not items:
+        return []
+    results: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def add(fid: str, path: str) -> None:
+        if fid not in seen and len(results) < max_n:
+            results.append((fid, f"[ID:{fid}] {path}"))
+            seen.add(fid)
+
+    for chosen in chosen_names:
+        if len(results) >= max_n:
+            break
+        norm = re.sub(r"\s+", " ", chosen.strip().lower())
+        if not norm or len(norm) < 4:
+            continue
+        # 1) substring match
+        hits = [(fid, p) for fid, p in items if norm in p.lower()]
+        if hits:
+            for fid, p in hits:
+                add(fid, p)
+            continue
+        # 2) word-overlap fallback
+        words = {w for w in re.sub(r"[^\wก-๙\s]", " ", norm).split() if len(w) > 1}
+        if not words:
+            continue
+        best_fid, best_path = max(items, key=lambda kv: len(words & set(re.sub(r"[^\wก-๙\s]", " ", kv[1].lower()).split())))
+        if len(words & set(re.sub(r"[^\wก-๙\s]", " ", best_path.lower()).split())) > 0:
+            add(best_fid, best_path)
+
+    return results
+
 # ── LLM ──────────────────────────────────────────────────────────────────────
 
 def _get_llm() -> LLM:
-    return LLM(model="gemini/gemini-2.0-flash", api_key=os.getenv("GEMINI_API_KEY"))
+    return LLM(model="gemini/gemini-2.5-flash-lite", api_key=os.getenv("GEMINI_API_KEY"))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -104,6 +159,75 @@ def _strip_csv_extension_mentions(text: str) -> str:
     cleaned = re.sub(r"(?i)\.csv\b", "", text)
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     return cleaned
+
+
+def _verify_file_relevance(prompt: str, selected_lines: list[str], llm) -> bool:
+    """ตรวจว่าไฟล์ที่ File Finder เลือกมา "ตรงหัวข้อคำถามจริง" หรือไม่.
+
+    จำเป็นเพราะ File Finder / _keyword_select คืนไฟล์ top-N "เสมอ" แม้ไม่มีคำตรง
+    เลย (score=0) จึงไม่เคยคืนค่าว่าง — ทำให้ pipeline เดินต่อด้วย CSV ที่ไม่เกี่ยวข้อง
+    (เช่น ถามพยาธิใบไม้ในตับ แต่ได้ไฟล์เบาหวานมา แล้วเอามาตอบทั้งที่คนละโรค)
+    ด่านนี้ให้ LLM ตัดสินแบบเข้มงวด ถ้าไม่ตรงให้ถือว่า "ไม่พบข้อมูล" แทนการเดา
+    """
+    if not selected_lines:
+        return False
+    files_text = "\n".join(f"- {ln}" for ln in selected_lines)
+    verifier = Agent(
+        role="Data Relevance Verifier",
+        goal="ตรวจสอบว่าชุดข้อมูลที่เลือกมาตรง 'หัวข้อ/โรค/ตัวชี้วัด' กับคำถามของผู้ใช้หรือไม่",
+        backstory=(
+            "คุณเป็นผู้ตรวจสอบความเกี่ยวข้องของข้อมูล โดยดูที่ 'หัวข้อ/โรค/ตัวชี้วัด/กลุ่ม "
+            "ประชากร' เป็นหลัก ว่าคำถามกับชุดข้อมูลเป็นเรื่องเดียวกันหรือไม่ "
+            "คุณเข้าใจว่าตัวกรองย่อย เช่น ปี จังหวัด อำเภอ ช่วงอายุ จะถูกกรองในขั้นตอน "
+            "ประมวลผลภายหลัง จึงไม่ใช่เหตุให้ปฏิเสธไฟล์ — ตราบใดที่หัวข้อตรงกัน "
+            "คุณปฏิเสธ (no) เฉพาะเมื่อเป็น 'คนละโรค/คนละเรื่อง' กันจริง ๆ เท่านั้น"
+        ),
+        llm=llm,
+        verbose=False,
+        max_iter=2,
+    )
+    result = _run_agent(
+        verifier,
+        (
+            f"คำถามผู้ใช้: {prompt}\n\n"
+            f"ชุดข้อมูลที่ระบบเลือกมา:\n{files_text}\n\n"
+            "ชุดข้อมูลข้างต้นเป็น 'หัวข้อ/โรค/ตัวชี้วัด/กลุ่มประชากร' เดียวกับคำถามหรือไม่?\n\n"
+            "⚠️ สำคัญมาก — ตัดสินจาก 'หัวข้อ' เท่านั้น และให้ค่าเริ่มต้นเอนไปทาง yes:\n"
+            "สิ่งต่อไปนี้ 'ไม่ใช่' เหตุให้ปฏิเสธ เพราะระบบจะจัดการในขั้นตอนประมวลผลถัดไป:\n"
+            "  • ปี / ช่วงปี ที่ระบุ (เช่น ถามปี 2567 ไฟล์ครอบคลุม 2565-2569 → ตรง)\n"
+            "  • จังหวัด / อำเภอ / พื้นที่ ที่ระบุ\n"
+            "  • ช่วงอายุ / เพศ / กลุ่มย่อย ที่ระบุ\n"
+            "  • การขอ 'แยกราย.../จำแนกตาม.../เฉพาะ.../แต่ละ...' (เช่น แยกรายอำเภอ "
+            "รายจังหวัด รายปี) — เป็นการแบ่งย่อยของหัวข้อเดิม ไม่ใช่คนละเรื่อง\n"
+            "  • คุณมองไม่เห็นคอลัมน์จริงในไฟล์ ห้ามเดาว่า 'ไฟล์อาจไม่มีระดับอำเภอ' "
+            "แล้วปฏิเสธ — ปล่อยให้ขั้นวิเคราะห์ตรวจเอง\n\n"
+            "เกณฑ์ตัดสิน:\n"
+            "- หัวข้อ/โรค/ตัวชี้วัดเดียวกัน → ตอบ yes (แม้คำถามจะเจาะจงปี/พื้นที่/อายุ "
+            "หรือขอแยกย่อยก็ตาม)\n"
+            "- ตอบ no 'เฉพาะ' เมื่อเป็นคนละเรื่องกันจริง ๆ เท่านั้น "
+            "(เช่น ถามพยาธิใบไม้ในตับ แต่ได้ข้อมูลเบาหวาน)\n\n"
+            "ตอบเพียงคำเดียว: yes หรือ no"
+        ),
+        "คำเดียว: yes หรือ no",
+    )
+    r = result.strip().lower()
+    if r.startswith("[agent error"):
+        return True  # LLM ล้ม → ไม่บล็อก ปล่อยให้ pipeline เดินต่อตามเดิม
+    return r.startswith("yes") or ("yes" in r and not r.startswith("no"))
+
+
+def _no_data_message(prompt: str, domain_name: str) -> str:
+    """ข้อความมาตรฐานเมื่อไม่พบชุดข้อมูลที่ตรงกับคำถาม — ไม่เอาข้อมูลอื่นมาตอบแทน."""
+    return (
+        "## ไม่พบข้อมูล\n\n"
+        f"ระบบไม่พบชุดข้อมูลสถิติที่ตรงกับคำถาม “{prompt}” "
+        f"ในคลังข้อมูลหมวด{domain_name}\n\n"
+        "เพื่อความถูกต้องของข้อมูล ระบบจะไม่นำข้อมูลหัวข้ออื่นมาตอบแทน\n\n"
+        "**ข้อเสนอแนะ**\n"
+        "- กรุณาตรวจสอบคำสะกด หรือระบุหัวข้อ/ตัวชี้วัดให้ชัดเจนขึ้น\n"
+        "- หากต้องการข้อมูลหัวข้อนี้ กรุณาแจ้งผู้ดูแลระบบ (admin) หรือผู้เกี่ยวข้อง "
+        "เพื่อเพิ่มชุดข้อมูลที่เกี่ยวข้องเข้าสู่ระบบ"
+    )
 
 
 def _skip_function_block(lines: list[str], start: int) -> int:
@@ -377,7 +501,7 @@ def run_pipeline(
     Emits SSE events via queue/loop. Covers:
       d0 — general knowledge (no CSV)
       d1 — accident agent (PostgreSQL, handled by caller)
-      d2–d8 — CSV pipeline: File Finder → Schema → Code Gen → Executor → Insight
+      d2–d4 — CSV pipeline: File Finder → Schema → Code Gen → Executor → Insight
     """
     llm = _get_llm()
 
@@ -389,11 +513,12 @@ def run_pipeline(
         put({"type": "agent_start", "step": "insight", "agentName": "Insight Analyst Agent"})
         analyst = Agent(
             role="Health Advisor",
-            goal="ตอบคำถามด้านสุขภาพเป็นภาษาไทยอย่างกระชับ เป็นธรรมชาติ และเป็นประโยชน์",
+            goal="ตอบคำถามด้านสุขภาพเป็นภาษาไทยที่เป็นทางการ สุภาพ ชัดเจน ถูกต้องตามหลักวิชาการ และเป็นประโยชน์",
             backstory=(
-                "คุณเป็นผู้เชี่ยวชาญด้านสุขภาพและสาธารณสุขที่สื่อสารได้เป็นธรรมชาติ "
-                "ตอบตรงประเด็น ภาษาเข้าใจง่าย ไม่ต้องทำรายงานทางการ "
-                "หากเป็นการสนทนาต่อเนื่องให้ต่อบทสนทนาได้เลย"
+                "คุณเป็นผู้เชี่ยวชาญด้านสุขภาพและสาธารณสุขที่สื่อสารด้วยภาษาทางการ "
+                "เหมาะสมกับบริบทราชการและงานวิชาการ ใช้ถ้อยคำสุภาพ เป็นกลาง ตรงประเด็น "
+                "และอ้างอิงหลักวิชาการเมื่อเหมาะสม "
+                "หากเป็นการสนทนาต่อเนื่องให้ต่อบทสนทนาได้อย่างเป็นทางการและสุภาพ"
             ),
             llm=llm,
             verbose=False,
@@ -436,7 +561,10 @@ def run_pipeline(
         from src.agents.accident_chat_orchestrator import run_accident_chat
 
         put({"type": "agent_start", "step": "sql_agent", "agentName": "Accident SQL Agent"})
-        acc_result = run_accident_chat(question=prompt)
+        # ⚠️ run_pipeline ได้ history_context มาเป็นพารามิเตอร์อยู่แล้ว (ใช้กับ d0/d2-d4
+        # ด้านบน/ล่างผ่าน history_section) แต่จุดนี้เคยลืมส่งต่อให้ accident pipeline
+        # ทำให้คำถามต่อเนื่อง (follow-up) เกี่ยวกับอุบัติเหตุ ตอบแบบไม่มีความจำการสนทนา
+        acc_result = run_accident_chat(question=prompt, history_context=history_context)
         put({"type": "agent_done", "step": "sql_agent", "agentName": "Accident SQL Agent",
              "result": acc_result.raw_data or "(ดึงข้อมูลเสร็จ)"})
 
@@ -460,97 +588,125 @@ def run_pipeline(
         })
         return
 
-    # ── d2–d8: CSV pipeline ───────────────────────────────────────────────────
+    # ── d2–d4: CSV pipeline ───────────────────────────────────────────────────
 
-    # STEP 2: File Finder
+    # STEP 2: File Finder — folder tree navigation (no tool call, deterministic resolve)
     put({"type": "agent_start", "step": "file_finder", "agentName": "File Finder Agent"})
+
+    path_index = _load_path_index()
+    tree_display = list_csv_tree_impl(domain.folder_prefix)
+
     finder = Agent(
-        role=f"File Finder Agent — {domain.name_en}",
-        goal=f"ค้นหาไฟล์ CSV ที่เกี่ยวข้องกับ{domain.name_th} และคืนค่า file ID ที่ถูกต้อง",
+        role=f"Folder Navigator Agent — {domain.name_en}",
+        goal=(
+            f"อ่านแผนผังหมวดหมู่ข้อมูล (folder tree) แล้วเลือก 'ชื่อโฟลเดอร์ตัวชี้วัด' "
+            f"ที่ตรงกับหัวข้อคำถามมากที่สุด ไม่เกิน 3 รายการ"
+        ),
         backstory=(
             f"{domain.expertise}\n"
-            "คุณต้องใช้ tool list_csv_files เพื่อดูรายการไฟล์ "
-            "แล้วคืนค่า ENTIRE line รวมถึง [ID:...] ที่แน่ชัด"
+            "คุณรู้ดีว่า 'ชื่อโฟลเดอร์' (ไม่ใช่ชื่อไฟล์ที่มักถูกตัดให้สั้นลง) "
+            "คือสิ่งที่บอกว่าข้อมูลนั้นวัดอะไรกันแน่ "
+            "คุณเลือกได้เฉพาะชื่อโฟลเดอร์ที่ปรากฏใน tree ที่ได้รับเท่านั้น ห้ามแต่งชื่อขึ้นเอง"
         ),
-        tools=[list_csv_files],
         llm=llm,
         verbose=False,
-        max_iter=5,
+        max_iter=3,
     )
-    file_result = _run_agent(
+    folder_result = _run_agent(
         finder,
         (
             f"{history_section}"
             f"คำถาม: {prompt}\n"
             f"Domain: {domain.name_th}\n\n"
-            f"ขั้นตอน:\n"
-            f"1. เรียก list_csv_files(prefix='{domain.folder_prefix}') เพื่อดูไฟล์ใน domain\n"
-            f"2. ถ้าไม่พบ ให้เรียก list_csv_files(prefix='') เพื่อดูทั้งหมด\n"
-            f"3. เลือกไฟล์ที่ตรงกับคำถามมากที่สุด (ใช้บริบทการสนทนาก่อนหน้าประกอบด้วย)\n"
-            f"4. ตอบเฉพาะ 1 บรรทัด ในรูปแบบ: [ID:xxxxxx] filename.csv\n"
-            f"   โดย [ID:xxxxxx] คือ ID จริงที่ได้จาก tool (ห้ามเปลี่ยน)"
+            f"แผนผังหมวดหมู่ข้อมูล (folder tree):\n{tree_display}\n\n"
+            "ขั้นตอนบังคับ:\n"
+            "1. ดูที่ชื่อโฟลเดอร์ระดับลึกสุด (อยู่เหนือ 📄 ไฟล์โดยตรง) — เป็นชื่อตัวชี้วัดเต็มๆ\n"
+            "2. เลือกโฟลเดอร์ที่ชื่อตรงกับหัวข้อคำถามมากที่สุด ไม่เกิน 3 ชื่อ\n"
+            "3. ตอบกลับเป็นรายการ 'ชื่อโฟลเดอร์' คัดลอกข้อความจาก tree ให้ตรงตัวอักษร บรรทัดละ 1 ชื่อ\n"
+            "   ห้ามตอบเป็น [ID:...] หรือชื่อไฟล์ — ตอบเฉพาะ 'ชื่อโฟลเดอร์' โค้ดจะหาไฟล์ให้เอง"
         ),
-        "Selected file: exactly one line in format [ID:xxxxxx] filename.csv",
+        "รายชื่อโฟลเดอร์ (≤3 ชื่อ) ที่ตรงกับหัวข้อคำถามที่สุด คัดลอกจาก tree บรรทัดละ 1 ชื่อ",
         step="file_finder", domain=domain.code, session_id=session_id,
     )
-    if file_result.startswith("[Agent error:") or not file_result.strip():
-        file_result = fallback_find_file(prompt, domain.folder_prefix)
-    put({"type": "agent_done", "step": "file_finder", "agentName": "File Finder Agent", "result": file_result})
 
-    resolved_file_id = resolve_file_id(file_result)
-    if not resolved_file_id:
-        fallback_listing = list_csv_files_impl(domain.folder_prefix or "")
-        if fallback_listing and not fallback_listing.startswith("No") and not fallback_listing.startswith("Error"):
-            first_line = fallback_listing.split("\n")[0]
-            resolved_file_id = resolve_file_id(first_line)
-            if resolved_file_id:
-                file_result = first_line
+    # Resolve folder names → file IDs deterministically
+    chosen_names = [
+        re.sub(r"^[\s\-•*\d.\)]+", "", ln).strip().rstrip("/")
+        for ln in folder_result.split("\n")
+    ]
+    chosen_names = [n for n in chosen_names if n and not n.startswith("[") and len(n) > 3]
 
-    if not resolved_file_id:
-        fallback_listing = list_csv_files_impl(domain.folder_prefix or "")
-        if not fallback_listing or fallback_listing.startswith("No") or fallback_listing.startswith("Error"):
-            fallback_listing = list_csv_files_impl("")
-        sample_lines = []
-        if fallback_listing and not fallback_listing.startswith("No") and not fallback_listing.startswith("Error"):
-            sample_lines = [ln for ln in fallback_listing.split("\n") if ln.strip()][:5]
+    selected = _resolve_folders_to_files(chosen_names, path_index, 3)
 
-        # ── Fallback to general AI when no file found ─────────────────────
+    # Fallback: folder nav failed → keyword scoring on flat listing
+    if not selected:
+        flat = list_csv_files_impl(domain.folder_prefix or "")
+        if not flat or flat.startswith("No") or flat.startswith("Error"):
+            flat = list_csv_files_impl("")
+        for line in _keyword_select(prompt, flat, 3):
+            fid = resolve_file_id(line)
+            if fid and not any(f == fid for f, _ in selected):
+                selected.append((fid, line))
+
+    file_result = selected[0][1] if selected else ""
+    resolved_file_id = selected[0][0] if selected else ""
+
+    # ── Relevance gate: ไฟล์ที่เลือกตรงหัวข้อคำถามไหม ───────────────────────
+    # File Finder คืน top-N เสมอ (แม้ไม่มีคำตรง) → ต้องกัน CSV มั่ว ๆ มาตอบ
+    # ถ้าไม่ตรง ให้แจ้ง "ไม่พบข้อมูล + แจ้ง admin" แทนการเอาข้อมูลอื่นมาตอบ
+    #
+    # ⚠️ รันเฉพาะ "คำถามแรก" (ไม่มี history) เท่านั้น — เพราะ verifier ตัดสินจากชื่อไฟล์
+    # ล้วน ๆ จึงไวต่อความเจาะจงของ follow-up (เช่น "...รายอำเภอ", "...จังหวัดอุบล")
+    # แล้วปฏิเสธไฟล์ที่ "หัวข้อตรง" ทั้งที่เทิร์นก่อนใช้ไฟล์นี้ตอบไปแล้ว (false-negative
+    # ที่จูน prompt เท่าไรก็ไม่หาย) สำหรับ follow-up หัวข้อถูก validate ไปแล้วในเทิร์นแรก
+    # + context-aware router คุม domain ต่อเนื่อง จึงข้าม gate ได้ปลอดภัย
+    # (เคสจับไฟล์ผิด เช่น พยาธิใบไม้→เบาหวาน เป็นคำถามแรกเสมอ → ยังถูก gate จับ)
+    _run_relevance_gate = not (history_context or "").strip()
+    if resolved_file_id and _run_relevance_gate and not _verify_file_relevance(prompt, [ln for _, ln in selected], llm):
+        put({"type": "agent_done", "step": "file_finder", "agentName": "File Finder Agent",
+             "result": f"พบไฟล์ใกล้เคียงแต่ไม่ตรงหัวข้อคำถาม — ถือว่าไม่มีข้อมูล\n{file_result}"})
+        from src.tools.missing_data_logger import log_missing_data
+        log_missing_data(prompt, domain=domain.code, reason="irrelevant_file", session_id=session_id)
+        no_data = _no_data_message(prompt, domain.name_th)
         put({"type": "agent_start", "step": "insight", "agentName": "Insight Analyst Agent"})
-        analyst = Agent(
-            role="Health Advisor",
-            goal="ตอบคำถามด้านสุขภาพเป็นภาษาไทยอย่างกระชับ เป็นธรรมชาติ และเป็นประโยชน์",
-            backstory=(
-                "คุณเป็นผู้เชี่ยวชาญด้านสุขภาพและสาธารณสุขที่สื่อสารได้เป็นธรรมชาติ "
-                "ตอบตรงประเด็น ภาษาเข้าใจง่าย ไม่ต้องทำรายงานทางการ"
-            ),
-            llm=llm,
-            verbose=False,
-            max_iter=5,
-        )
-        insight = _run_agent(
-            analyst,
-            (
-                f"{history_section}"
-                f"คำถาม: {prompt}\n\n"
-                "ตอบเป็นภาษาไทย กระชับ เป็นธรรมชาติ ตรงประเด็น "
-                "ไม่ต้องใส่หัวข้อ สรุปผู้บริหาร แหล่งข้อมูล หรือโครงสร้างรายงานทางการ "
-                "ตอบเหมือนผู้เชี่ยวชาญด้านสุขภาพคุยกับคนทั่วไปโดยตรง"
-            ),
-            "คำตอบที่ชัดเจนและเป็นประโยชน์เป็นภาษาไทย",
-        )
-        insight = _strip_csv_extension_mentions(insight)
-        put({"type": "agent_done", "step": "insight", "agentName": "Insight Analyst Agent", "result": insight})
+        put({"type": "agent_done", "step": "insight", "agentName": "Insight Analyst Agent", "result": no_data})
         if session_id:
-            append_history(session_id, "ai", insight)
+            append_history(session_id, "ai", no_data)
         put({
             "type": "final",
-            "message": insight,
+            "message": no_data,
             "domain": {"code": domain.code, "nameTh": domain.name_th, "nameEn": domain.name_en},
             "agentSteps": [
                 {"step": "router",      "agentName": "Router Agent",          "result": f"{domain.code} — {domain.name_th}"},
                 {"step": "reasoning",   "agentName": "Reasoning Narrator",    "result": reasoning},
-                {"step": "file_finder", "agentName": "File Finder Agent",     "result": file_result or "ไม่พบไฟล์ — ใช้ความรู้ทั่วไปแทน"},
-                {"step": "insight",     "agentName": "Insight Analyst Agent", "result": insight},
+                {"step": "file_finder", "agentName": "File Finder Agent",     "result": "ไม่พบชุดข้อมูลที่ตรงกับคำถาม"},
+                {"step": "insight",     "agentName": "Insight Analyst Agent", "result": no_data},
+            ],
+        })
+        return
+
+    put({"type": "agent_done", "step": "file_finder", "agentName": "File Finder Agent", "result": file_result})
+
+    if not resolved_file_id:
+        # ── ไม่พบไฟล์ที่ตรงคำถามเลย → แจ้ง "ไม่พบข้อมูล + แจ้ง admin" ─────────
+        # (โหมดสถิติต้องตอบจากชุดข้อมูลจริงเท่านั้น — ไม่เอาความรู้ทั่วไปมาตอบแทน
+        #  เพื่อไม่ให้ผู้ใช้เข้าใจผิดว่าระบบมีสถิติเรื่องนั้น ๆ)
+        from src.tools.missing_data_logger import log_missing_data
+        log_missing_data(prompt, domain=domain.code, reason="no_file_found", session_id=session_id)
+        no_data = _no_data_message(prompt, domain.name_th)
+        put({"type": "agent_start", "step": "insight", "agentName": "Insight Analyst Agent"})
+        put({"type": "agent_done", "step": "insight", "agentName": "Insight Analyst Agent", "result": no_data})
+        if session_id:
+            append_history(session_id, "ai", no_data)
+        put({
+            "type": "final",
+            "message": no_data,
+            "domain": {"code": domain.code, "nameTh": domain.name_th, "nameEn": domain.name_en},
+            "agentSteps": [
+                {"step": "router",      "agentName": "Router Agent",          "result": f"{domain.code} — {domain.name_th}"},
+                {"step": "reasoning",   "agentName": "Reasoning Narrator",    "result": reasoning},
+                {"step": "file_finder", "agentName": "File Finder Agent",     "result": "ไม่พบชุดข้อมูลที่ตรงกับคำถาม"},
+                {"step": "insight",     "agentName": "Insight Analyst Agent", "result": no_data},
             ],
         })
         return
@@ -635,6 +791,11 @@ def run_pipeline(
             "7.0 ถ้าคำถามระบุ ปี/จังหวัด/อำเภอ/ช่วงอายุ ต้อง filter เฉพาะช่วงที่ถามก่อนคำนวณ\n"
             "    - ห้ามรวมปีนอกช่วงที่ผู้ใช้ถาม\n"
             "    - ต้อง print section '=== SCOPE CHECK ===' ระบุช่วงที่ผู้ใช้ถามและช่วงที่ใช้จริง\n"
+            "    ⚠️ หน่วยปี: คอลัมน์ปีในไฟล์ CSV เก็บเป็น 'พ.ศ.' (เช่น 2565-2569) — "
+            "ปีที่ผู้ใช้ถามก็เป็น พ.ศ. เช่นกัน 'ห้ามแปลงเป็น ค.ศ.' (อย่าลบ 543) "
+            "ผู้ใช้ถาม 'ปี 2567' → filter df['ปี'] == 2567 ตรง ๆ (ไม่ใช่ 2024)\n"
+            "    - ให้ตรวจ df['ปี'].unique() ก่อนเสมอ แล้วจับหน่วยให้ตรง: ถ้าค่าในคอลัมน์"
+            "อยู่ช่วง 25xx = พ.ศ. (ใช้ปีที่ถามตรง ๆ), ถ้าอยู่ช่วง 20xx = ค.ศ. (ค่อยลบ 543)\n"
             "7.1 ถ้าไม่พบคอลัมน์ตรงกับช่วงอายุ/กลุ่มเป้าหมายที่ถาม ให้คำนวณประมาณการจากคอลัมน์ใกล้เคียงในไฟล์เดียวกัน\n"
             "    - มี 2 ช่วงคร่อมเป้าหมาย: ใช้ interpolation ด้วย midpoint\n"
             "    - มีเพียง 1 ช่วง: ใช้ nearest-neighbor proxy\n"
@@ -687,6 +848,9 @@ def run_pipeline(
                     "4. Do not redefine helper functions\n"
                     "5. Keep output labels clear and keep business logic intact\n"
                     "6. Respect requested scope (year/area/age) and include '=== SCOPE CHECK ==='\n"
+                    "   ⚠️ Year unit: CSV 'ปี' columns are in Buddhist era (พ.ศ., e.g. 2565-2569). "
+                    "The user's year is also พ.ศ. — do NOT convert to ค.ศ. (do not subtract 543). "
+                    "User asks 'ปี 2567' → filter df['ปี'] == 2567 directly. Inspect df['ปี'].unique() first to confirm the unit.\n"
                     "7. If requested age range has no direct column, compute estimate and label output with target age\n"
                     "Wrap code in ```python ... ```"
                 ),

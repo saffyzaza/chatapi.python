@@ -18,6 +18,7 @@ class WorkplanRequest(BaseModel):
     sessionId: str
     prompt: str
     doc_type: str = "workplan"  # workplan | plan | policy
+    history: Optional[list] = None
 
 
 class DatabaseRequest(BaseModel):

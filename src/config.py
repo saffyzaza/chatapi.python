@@ -1,3 +1,4 @@
+﻿from pathlib import Path
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -6,7 +7,7 @@ class Settings(BaseSettings):
     # PostgreSQL
     DB_HOST: str = "localhost"
     DB_PORT: int = 5432
-    DB_NAME: str = "accident_db"
+    DB_NAME: str = "musyadata"
     DB_USER: str = "postgres"
     DB_PASSWORD: str = "1234"
 
@@ -18,8 +19,8 @@ class Settings(BaseSettings):
 
     # Google Gemini
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
-    GEMINI_MODEL_PRO: str = "gemini-3.1-pro-preview"
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_MODEL_PRO: str = "gemini-2.5-pro"
     REPORT_MAX_TOKENS: int = 8192
 
     # Gemini retry (429 RESOURCE_EXHAUSTED)
@@ -45,6 +46,14 @@ class Settings(BaseSettings):
     @property
     def minio_endpoint_url(self) -> str:
         return f"{self.MINIO_ENDPOINT}:{self.MINIO_PORT}"
+
+    # Obsidian Knowledge Vault
+    OBSIDIAN_VAULT_PATH: str = str(Path(__file__).parent / "obsidian_knowledge")
+    OBSIDIAN_DEFAULT_VAULT: str = "health_region_10"
+    OBSIDIAN_ENABLED: bool = True
+    OBSIDIAN_SEARCH_THRESHOLD: float = 0.1
+    OBSIDIAN_RAW_PDF_PATH: str = "obsidian_raw_pdf"
+    OBSIDIAN_PDF_MINIO_PREFIX: str = "obsidian-pdfs"
 
     # Server
     HOST: str = "0.0.0.0"

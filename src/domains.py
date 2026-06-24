@@ -47,34 +47,6 @@ DOMAINS: dict[str, Domain] = {
         folder_prefix="D4_Nutrition",
         expertise="ผู้เชี่ยวชาญด้านโภชนาการ ภาวะทุพโภชนาการ โรคอ้วน และความมั่นคงทางอาหาร",
     ),
-    "d5": Domain(
-        code="d5",
-        name_th="ผู้สูงอายุ",
-        name_en="Elderly Care",
-        folder_prefix="D5_Elderly",
-        expertise="ผู้เชี่ยวชาญด้านสุขภาพผู้สูงอายุ การดูแลระยะยาว ภาวะพึ่งพิง และสังคมผู้สูงวัย",
-    ),
-    "d6": Domain(
-        code="d6",
-        name_th="โรคติดต่อ",
-        name_en="Communicable Disease",
-        folder_prefix="D6_Communicable",
-        expertise="ผู้เชี่ยวชาญด้านโรคติดต่อ เช่น ไข้เลือดออก มาลาเรีย วัณโรค และการระบาดของโรค",
-    ),
-    "d7": Domain(
-        code="d7",
-        name_th="มะเร็ง",
-        name_en="Cancer",
-        folder_prefix="D7_Cancer",
-        expertise="ผู้เชี่ยวชาญด้านโรคมะเร็ง อัตราการเกิดโรค การตรวจคัดกรอง และสถิติการรักษา",
-    ),
-    "d8": Domain(
-        code="d8",
-        name_th="ประชากร",
-        name_en="Population",
-        folder_prefix="D8_Population",
-        expertise="ผู้เชี่ยวชาญด้านประชากรศาสตร์ การเติบโต การกระจายตัว และโครงสร้างประชากร",
-    ),
     "dt": Domain(
         code="dt",
         name_th="วิจัย ThaiJo",
@@ -83,6 +55,17 @@ DOMAINS: dict[str, Domain] = {
         expertise=(
             "ผู้เชี่ยวชาญด้านการสังเคราะห์งานวิจัยทางวิชาการ "
             "ค้นหาและสรุปบทความจากฐานข้อมูล ThaiJo สร้างรายงานวิชาการอัตโนมัติ"
+        ),
+    ),
+    "obsidian": Domain(
+        code="obsidian",
+        name_th="คลังความรู้สุขภาพ เขต 10",
+        name_en="Obsidian Knowledge Vault",
+        folder_prefix="",
+        expertise=(
+            "ผู้เชี่ยวชาญด้านข้อมูลสุขภาพเขตสุขภาพที่ 10 (อุบลราชธานี ศรีสะเกษ ยโสธร อำนาจเจริญ มุกดาหาร) "
+            "ค้นหาและตอบคำถามจาก Obsidian Knowledge Vault ซึ่งเป็นฐานความรู้ "
+            "ด้านนโยบาย รายงาน และข้อมูลสุขภาพของเขตสุขภาพที่ 10"
         ),
     ),
 }

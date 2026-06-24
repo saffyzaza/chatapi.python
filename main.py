@@ -15,6 +15,8 @@ from src.routers.analyze import router as analyze_router
 from src.routers.error_log import router as error_log_router
 from src.routers.thaijo import router as thaijo_router
 from src.routers.tools_router import router as tools_router
+from src.routers.obsidian import router as obsidian_router
+from src.routers.db_explorer import router as db_explorer_router
 from src.routers.pdf_ingest import router as pdf_ingest_router
 
 load_dotenv()
@@ -63,6 +65,7 @@ _UI_PAGES = [
     ("db_explorer_ui.html",         "🗄️ DB Explorer",             "สำรวจ Database Tables"),
     ("thaijo_research_ui.html",     "🔬 ThaiJO Research",          "ค้นหางานวิจัย ThaiJO"),
     ("test_ui.html",                "🧪 Test UI",                  "ทดสอบ Tools & Pipeline"),
+    ("obsidian_knowledge_ui.html",   "🌿 Obsidian Knowledge Vault",  "คลังความรู้สุขภาพ เขตสุขภาพที่ 10"),
 ]
 
 

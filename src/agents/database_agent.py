@@ -1,4 +1,4 @@
-"""Database Agent — loads an attached file from MinIO and answers user's question about it.
+﻿"""Database Agent — loads an attached file and answers user's question about it.
 
 Flow:
   [Step 1] Schema Analyst  — อ่าน schema ของไฟล์ที่แนบมา
@@ -21,6 +21,7 @@ import asyncio
 import base64
 import os
 import re
+import tempfile
 from typing import Any
 
 import litellm
@@ -32,6 +33,7 @@ from src.tools.minio import (
     read_file_text_impl,
     read_file_extension_impl,
     exec_python,
+    _csv_schema_from_bytes,
 )
 from src.agents.csv_pipeline import (
     _get_llm,
@@ -69,6 +71,7 @@ def run_database_pipeline(
     loop: asyncio.AbstractEventLoop,
     session_id: str = "",
     attached_files: list[dict] = [],
+    history_context: str = "",
 ) -> None:
     """Run the database analysis pipeline for user-attached files.
 
@@ -78,6 +81,7 @@ def run_database_pipeline(
         loop: asyncio event loop
         session_id: session identifier
         attached_files: list of {"id": str, "name": str} — use id as minio object key
+        history_context: ประวัติการสนทนาก่อนหน้า (จาก build_history_context)
     """
     llm = _get_llm()
 
@@ -95,24 +99,85 @@ def run_database_pipeline(
         })
         return
 
+    # ── helper: save base64 content ลง temp dir เพื่อให้ Python executor หาได้ ──
+    def _save_to_tmp(f: dict) -> None:
+        b64 = f.get("content", "")
+        fid = f.get("id", "")
+        if not b64 or not fid:
+            return
+        tmp_dir = os.environ.get("CHAT_UPLOAD_TMP_DIR",
+                                 os.path.join(tempfile.gettempdir(), "chat_uploads"))
+        os.makedirs(tmp_dir, exist_ok=True)
+        dest = os.path.join(tmp_dir, fid)
+        if not os.path.isfile(dest):
+            with open(dest, "wb") as fp:
+                fp.write(base64.b64decode(b64))
+
+    # Save ทุกไฟล์ลง temp ก่อน เพื่อให้ load_csv / exec_python หาได้
+    for _f in attached_files:
+        _save_to_tmp(_f)
+
+    # ── helper: ดึง bytes จาก content (base64) หรือ temp/MinIO ──────────────────
+    def _get_bytes(f: dict) -> bytes:
+        b64 = f.get("content", "")
+        if b64:
+            return base64.b64decode(b64)
+        return read_file_bytes_impl(f.get("id", ""))
+
+    def _get_schema(f: dict, ext_: str) -> str:
+        """ดึง schema ใช้ bytes โดยตรงถ้ามี content ไม่ต้องผ่าน MinIO"""
+        b64  = f.get("content", "")
+        fid  = f.get("id", "")
+        name = f.get("name", fid)
+        if b64:
+            data = base64.b64decode(b64)
+            try:
+                if ext_ == "csv":
+                    return _csv_schema_from_bytes(data, fid, name)
+                elif ext_ in ("xlsx", "xls"):
+                    import json as _json, pandas as _pd, io as _io
+                    engine = "openpyxl" if ext_ == "xlsx" else "xlrd"
+                    df = _pd.read_excel(_io.BytesIO(data), engine=engine)
+                    return _json.dumps({"file_id": fid, "type": "excel",
+                        "shape": list(df.shape), "columns": list(df.columns),
+                        "sample": df.head(5).to_dict(orient="records")},
+                        ensure_ascii=False, indent=2)
+                elif ext_ == "pdf":
+                    import pdfplumber as _pp, io as _io
+                    with _pp.open(_io.BytesIO(data)) as pdf:
+                        parts = [p.extract_text() for p in pdf.pages[:20] if p.extract_text()]
+                    return "\n\n".join(parts) or "[PDF ไม่มี text layer — อาจเป็น PDF รูปภาพ]"
+                elif ext_ in ("doc", "docx"):
+                    import docx as _docx, io as _io
+                    doc = _docx.Document(_io.BytesIO(data))
+                    return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+                else:
+                    return data.decode("utf-8", errors="ignore")[:10_000]
+            except Exception as exc:
+                return f"Error parsing {ext_} from content: {exc}"
+        # fallback: อ่านจาก temp/MinIO ตามเดิม
+        if ext_ == "csv":
+            return read_csv_schema_impl(fid)
+        return read_file_text_impl(fid, ext_)
+
     # Use the first attached file (primary dataset)
     primary_file = attached_files[0]
-    file_id = primary_file.get("id", "")
+    file_id   = primary_file.get("id", "")
     file_name = primary_file.get("name", file_id)
 
     if not file_id:
         put({
             "type": "final",
-            "message": "ไม่สามารถระบุ ID ของไฟล์ที่แนบมาได้ กรุณาลองอีกครั้ง",
+            "message": "ไม่สามารถระบุไฟล์ที่แนบมาได้ กรุณาลองอีกครั้ง",
             "agentSteps": [],
         })
         return
 
     # ── Detect file type ─────────────────────────────────────────────────────
-    ext = read_file_extension_impl(file_id)
+    dot = file_name.rfind(".")
+    ext = file_name[dot + 1:].lower() if dot >= 0 else ""
     if not ext:
-        dot = file_name.rfind(".")
-        ext = file_name[dot + 1:].lower() if dot >= 0 else "csv"
+        ext = read_file_extension_impl(file_id) or "csv"
     is_image_file = ext in _IMAGE_TYPES
     is_text_file  = ext in _TEXT_TYPES
 
@@ -120,7 +185,7 @@ def run_database_pipeline(
     if is_image_file:
         put({"type": "agent_start", "step": "schema", "agentName": "Image Analyst"})
         try:
-            img_bytes = read_file_bytes_impl(file_id)
+            img_bytes = _get_bytes(primary_file)
             img_b64   = base64.b64encode(img_bytes).decode()
             mime      = _IMAGE_MIME.get(ext, "image/jpeg")
             put({"type": "agent_done", "step": "schema", "agentName": "Image Analyst",
@@ -130,7 +195,7 @@ def run_database_pipeline(
 
             put({"type": "agent_start", "step": "insight", "agentName": "Vision Agent"})
             resp = litellm.completion(
-                model="gemini/gemini-2.0-flash",
+                model="gemini/gemini-2.5-flash-lite",
                 api_key=os.getenv("GEMINI_API_KEY"),
                 messages=[{
                     "role": "user",
@@ -162,12 +227,7 @@ def run_database_pipeline(
     step_name = "File Reader" if is_text_file else "Schema Analyst"
     put({"type": "agent_start", "step": "schema", "agentName": step_name})
 
-    if is_text_file:
-        schema_result = read_file_text_impl(file_id, ext)
-    elif ext in ("xlsx", "xls"):
-        schema_result = read_file_text_impl(file_id, ext)
-    else:
-        schema_result = read_csv_schema_impl(file_id)
+    schema_result = _get_schema(primary_file, ext)
 
     if not schema_result or schema_result.startswith("Error"):
         schema_result = f"[ไม่สามารถอ่านไฟล์ '{file_name}' (ID: {file_id}, type: {ext})]"
@@ -181,11 +241,10 @@ def run_database_pipeline(
     extra_schemas = ""
     if len(attached_files) > 1:
         for extra_file in attached_files[1:]:
-            extra_id = extra_file.get("id", "")
-            extra_name = extra_file.get("name", extra_id)
-            if extra_id:
-                extra_schema = read_csv_schema_impl(extra_id)
-                extra_schemas += f"\n\n=== Schema ของไฟล์ '{extra_name}' (ID: {extra_id}) ===\n{extra_schema}"
+            extra_name = extra_file.get("name", extra_file.get("id", ""))
+            extra_ext  = extra_name.rsplit(".", 1)[-1].lower() if "." in extra_name else "csv"
+            extra_schema = _get_schema(extra_file, extra_ext)
+            extra_schemas += f"\n\n=== Schema ของไฟล์ '{extra_name}' ===\n{extra_schema}"
 
     full_schema = (
         f"=== Schema ของไฟล์หลัก '{file_name}' (ID: {file_id}) ===\n{schema_result}"
@@ -360,9 +419,11 @@ def run_database_pipeline(
             ),
             llm=llm, verbose=False, max_iter=5,
         )
+        history_section = f"{history_context}\n\n" if history_context else ""
         insight = _run_agent(
             analyst,
             (
+                f"{history_section}"
                 f"คำถาม: {prompt}\nไฟล์: '{file_name}'\n\n"
                 f"ผลการรันโค้ด:\n{exec_output}\n\n"
                 "กฎ: ใช้เฉพาะข้อมูลจาก Execution Result\n\n"
