@@ -1,4 +1,4 @@
-"""Tavily Search pipeline — 2-agent pipeline for external web search Q&A.
+﻿"""Tavily Search pipeline — 2-agent pipeline for external web search Q&A.
 
 Pipeline:
   TavilySearchAgent  — ค้นหาข้อมูลจากอินเทอร์เน็ตด้วย Tavily
@@ -16,7 +16,7 @@ from src.tools.tavily_search import tavily_search
 
 
 def _get_llm() -> LLM:
-    return LLM(model="gemini/gemini-2.0-flash", api_key=os.getenv("GEMINI_API_KEY"))
+    return LLM(model="gemini/gemini-2.5-flash-lite", api_key=os.getenv("GEMINI_API_KEY"))
 
 
 SEARCH_AGENT_PROMPT = """คุณคือ Web Search Specialist ผู้เชี่ยวชาญด้านการค้นหาข้อมูลจากอินเทอร์เน็ต

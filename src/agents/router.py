@@ -1,4 +1,4 @@
-"""Router Agent — classifies user questions into health domains d0–d8, dt."""
+﻿"""Router Agent — classifies user questions into health domains d0–d4, dt, obsidian."""
 import os
 import re
 
@@ -6,8 +6,8 @@ from crewai import Agent, Crew, LLM, Task
 
 from src.domains import Domain, DOMAINS, DOMAIN_LIST_TEXT
 
-# Domains that have CSV files in MinIO (d2–d8 only; d0=general, d1=PostgreSQL)
-_CSV_DOMAIN_CODES = {"d2", "d3", "d4", "d5", "d6", "d7", "d8"}
+# Domains that have CSV files in MinIO (d2–d4 only; d0=general, d1=PostgreSQL)
+_CSV_DOMAIN_CODES = {"d2", "d3", "d4"}
 
 # ── ThaiJo keyword detection ──────────────────────────────────────────────────
 
@@ -17,6 +17,15 @@ _THAIJO_KEYWORDS = [
     r"สังเคราะห์งานวิจัย", r"วรรณกรรม",
     r"สร้าง\s*journal", r"สร้าง\s*report\s*วิจัย",
     r"ค้นหาบทความ", r"journal\s*report",
+]
+
+_OBSIDIAN_KEYWORDS = [
+    r"obsidian", r"คลังความรู้", r"knowledge\s*vault",
+    r"เขตสุขภาพ", r"เขต\s*(?:ที่\s*)?10",
+    r"อุบลราชธานี", r"ศรีสะเกษ", r"ยโสธร", r"อำนาจเจริญ", r"มุกดาหาร",
+    r"สสจ\.?", r"สาธารณสุขจังหวัด",
+    r"นโยบาย.*สุขภาพ.*จังหวัด", r"รายงาน.*สสจ",
+    r"vault",
 ]
 
 _ACCIDENT_KEYWORDS = [
@@ -31,6 +40,12 @@ def _has_thaijo_signal(prompt: str) -> bool:
     """True when the query is asking for a ThaiJo research journal."""
     p = prompt.lower()
     return any(re.search(kw, p) for kw in _THAIJO_KEYWORDS)
+
+
+def _has_obsidian_signal(prompt: str) -> bool:
+    """True when the query is about Obsidian Knowledge Vault / Health Region 10."""
+    p = prompt.lower()
+    return any(re.search(kw, p) for kw in _OBSIDIAN_KEYWORDS)
 
 
 def _has_accident_signal(prompt: str) -> bool:
@@ -103,10 +118,6 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "d2": ["สุขภาพจิต", "ฆ่าตัวตาย", "ซึมเศร้า", "จิตเวช", "mental"],
     "d3": ["ncd", "เบาหวาน", "ความดัน", "หัวใจ", "หลอดเลือด", "โรคไม่ติดต่อ", "ncds"],
     "d4": ["โภชนาการ", "อ้วน", "bmi", "วัยเรียน", "วัยทำงาน", "ภาวะโภชนาการ", "น้ำหนัก", "nutrition"],
-    "d5": ["ผู้สูงอายุ", "สูงวัย", "elderly", "ผู้สูง"],
-    "d6": ["โรคติดต่อ", "ไข้เลือดออก", "มาลาเรีย", "วัณโรค", "ติดเชื้อ"],
-    "d7": ["มะเร็ง", "cancer"],
-    "d8": ["ประชากร", "population", "ประชาชน"],
 }
 
 
@@ -123,7 +134,127 @@ def _keyword_infer_domains(prompt: str) -> list[str]:
 
 
 def _get_llm() -> LLM:
-    return LLM(model="gemini/gemini-2.0-flash", api_key=os.getenv("GEMINI_API_KEY"))
+    return LLM(model="gemini/gemini-2.5-flash-lite", api_key=os.getenv("GEMINI_API_KEY"))
+
+
+def is_accident_question(prompt: str, history_context: str = "") -> bool:
+    """True ถ้าคำถามเกี่ยวกับ "อุบัติเหตุ/ความปลอดภัยทางถนน" (d1 → SQL) ไม่ใช่โรค/สุขภาพทั่วไป.
+
+    ใช้ในโหมด stats เป็น "LLM นำ" เพื่อตัดสิน d1 (PostgreSQL) vs CSV (d2/d3/d4)
+    ก่อนจะ default ไป CSV เสมอ — keyword (_has_accident_signal) เป็น safety-net:
+    ถ้า keyword เจอชัด ๆ ก็ True ทันทีไม่ต้องเรียก LLM (เร็ว+ฟรี); ถ้า keyword miss
+    จึงให้ LLM ตัดสิน เพื่อจับคำที่ keyword list ครอบไม่ถึง เช่น
+    "คนตายบนถนนเยอะไหม", "สถิติคนเจ็บจากการขับขี่", "ความปลอดภัยทางถนนอุบล".
+    """
+    # Safety-net: keyword ชัดเจน → ไม่ต้องเสีย latency เรียก LLM
+    if _has_accident_signal(prompt):
+        return True
+
+    classifier = Agent(
+        role="Accident Intent Classifier",
+        goal="ตัดสินว่าคำถามเกี่ยวกับอุบัติเหตุ/ความปลอดภัยทางถนน หรือเรื่องโรค/สุขภาพทั่วไป",
+        backstory=(
+            "คุณเชี่ยวชาญการจำแนกคำถามสุขภาพ โดยเฉพาะการแยกว่าเรื่องไหนเกี่ยวกับ "
+            "'อุบัติเหตุทางถนน' (เช่น คนเจ็บ/ตายบนถนน รถชน จราจร การขับขี่ ความปลอดภัยทางถนน "
+            "ผู้บาดเจ็บ/เสียชีวิตจากการเดินทาง) กับเรื่อง 'โรค/สุขภาพทั่วไป' "
+            "(เช่น เบาหวาน ความดัน สุขภาพจิต โภชนาการ). คุณตอบเพียงคำเดียว ห้ามอธิบายเพิ่ม"
+        ),
+        llm=_get_llm(),
+        verbose=False,
+        max_iter=2,
+    )
+    history_section = f"{history_context}\n\n" if history_context else ""
+    task = Task(
+        description=(
+            f"{history_section}"
+            f"คำถาม: {prompt}\n\n"
+            "คำถามนี้เกี่ยวกับอะไร ตอบเพียงคำเดียว:\n"
+            "- accident → อุบัติเหตุ/ความปลอดภัยทางถนน/รถชน/ผู้บาดเจ็บ-เสียชีวิตจากการเดินทาง\n"
+            "- health   → โรค/สุขภาพทั่วไป (เบาหวาน ความดัน สุขภาพจิต โภชนาการ ฯลฯ)"
+        ),
+        expected_output="คำเดียว: accident หรือ health",
+        agent=classifier,
+    )
+    crew = Crew(agents=[classifier], tasks=[task], verbose=False)
+    try:
+        result = str(crew.kickoff()).strip().lower()
+    except Exception:
+        return False  # LLM ล้ม → ปล่อยให้ตกไป CSV ตาม flow เดิม
+    return "accident" in result
+
+
+def route_stats_domains(
+    prompt: str, history_context: str = ""
+) -> tuple[list[Domain], bool, str]:
+    """LLM router สำหรับโหมดสถิติ — อ่าน context การสนทนา + ให้เหตุผล แล้วเลือก domain.
+
+    ต่างจาก route_multi_domain ตรงที่ "ยึดความต่อเนื่องของบทสนทนา" เป็นหลัก:
+    ถ้าคำถามล่าสุดเป็น follow-up (ขอแยกย่อย/เจาะจงพื้นที่-ปี-กลุ่ม เช่น "ขอแต่ละอำเภอ",
+    "เฉพาะปี 2567") ให้ใช้ domain เดิมที่กำลังคุยอยู่ ไม่ re-classify ใหม่จนหลุดหัวข้อ
+    (เดิม router มองคำถามล่าสุดอย่างเดียว → follow-up ที่หัวข้อหายไปถูกจัดผิด domain)
+
+    Returns:
+        (domains, is_multi, reasoning) — reasoning = "วิธีคิด" ของ AI เพื่อแสดงให้ผู้ใช้เห็น
+    """
+    history_section = f"{history_context}\n\n" if history_context else ""
+    router = Agent(
+        role="Stats Domain Router (context-aware)",
+        goal="อ่านบริบทการสนทนาทั้งหมดแล้วเลือก domain ข้อมูลสถิติที่ถูกต้อง พร้อมอธิบายเหตุผล",
+        backstory=(
+            "คุณเป็น Router ที่เข้าใจ 'ความต่อเนื่องของบทสนทนา' — ไม่ได้ดูแค่คำถามล่าสุด "
+            "แต่ดูว่าก่อนหน้านี้กำลังคุยเรื่อง domain ใดอยู่ คำถามตามหลังที่เป็นการขอ "
+            "เจาะลึก/แยกย่อย/กรองพื้นที่หรือปี ถือเป็นเรื่องเดิม domain เดิมเสมอ"
+        ),
+        llm=_get_llm(),
+        verbose=False,
+        max_iter=3,
+    )
+    task = Task(
+        description=(
+            f"{history_section}"
+            f"คำถามล่าสุด: {prompt}\n\n"
+            "Domain ข้อมูลสถิติ (CSV) ที่มี:\n"
+            "- d2 สุขภาพจิต — ฆ่าตัวตาย ซึมเศร้า จิตเวช\n"
+            "- d3 โรคไม่ติดต่อ (NCDs) — เบาหวาน ความดัน หัวใจ หลอดเลือด\n"
+            "- d4 โภชนาการ — ภาวะอ้วน BMI น้ำหนัก วัยเรียน วัยทำงาน ภาวะโภชนาการ\n\n"
+            "กฎการตัดสิน:\n"
+            "1. ถ้าคำถามล่าสุดเป็น 'follow-up' (เช่น 'ขอแต่ละอำเภอ', 'เฉพาะปี 2567', "
+            "'แยกตามเพศ', 'ขอแค่จังหวัด...') → ใช้ domain เดิมจากประวัติการสนทนา ห้ามเปลี่ยน\n"
+            "2. ถ้าเป็นหัวข้อใหม่ → เลือก domain ที่ตรงหัวข้อมากที่สุด (เลือกได้สูงสุด 3)\n\n"
+            "ตอบ 2 บรรทัด:\n"
+            "REASONING: <อธิบายวิธีคิดสั้น ๆ 1-2 ประโยค ว่าเป็นเรื่องเดิมต่อเนื่องหรือหัวข้อใหม่ "
+            "และทำไมจึงเลือก domain นี้>\n"
+            "DOMAINS: <รหัส domain คั่นด้วย comma เช่น d4 หรือ d3,d4>"
+        ),
+        expected_output="REASONING: ... \\nDOMAINS: d4",
+        agent=router,
+    )
+    crew = Crew(agents=[router], tasks=[task], verbose=False)
+    try:
+        raw = str(crew.kickoff()).strip()
+    except Exception:
+        raw = ""
+
+    # แยก reasoning + codes
+    reasoning = ""
+    m_reason = re.search(r"REASONING:\s*(.+?)(?:\n|$)", raw, re.IGNORECASE | re.DOTALL)
+    if m_reason:
+        reasoning = m_reason.group(1).split("DOMAINS:")[0].strip()
+    m_dom = re.search(r"DOMAINS:\s*(.+)", raw, re.IGNORECASE)
+    code_src = m_dom.group(1) if m_dom else raw
+    codes = list(dict.fromkeys(re.findall(r"\bd[2-4]\b", code_src.lower())))[:3]
+
+    # Fallback: LLM ไม่คืน code → ใช้ keyword inference, สุดท้ายค่อย default d3
+    if not codes:
+        codes = [c for c in _keyword_infer_domains(prompt) if c in _CSV_DOMAIN_CODES]
+    if not codes:
+        codes = ["d3"]
+
+    domains = [DOMAINS[c] for c in codes]
+    is_multi = len(domains) >= 2
+    if not reasoning:
+        reasoning = f"เลือก {' + '.join(d.name_th for d in domains)} จากหัวข้อคำถาม"
+    return domains, is_multi, reasoning
 
 
 def route_domain(prompt: str, history_context: str = "") -> Domain:
@@ -131,13 +262,23 @@ def route_domain(prompt: str, history_context: str = "") -> Domain:
 
     Fast-path: if ThaiJo keywords detected → return 'dt' immediately.
     """
+    # Fast path: Road accidents (high-priority hard rule)
+    # ⚠️ ต้องอยู่ "ก่อน" Obsidian เสมอ — ห้ามสลับ! เพราะ _OBSIDIAN_KEYWORDS มีชื่อ
+    # จังหวัดเขต 10 เต็ม ๆ อยู่ (เช่น "อุบลราชธานี", "ศรีสะเกษ") ซึ่งคำถามอุบัติเหตุ
+    # ก็มักระบุชื่อจังหวัดด้วยเสมอ (โดยเฉพาะหลัง Memory Agent ขยาย "อุบล" → "อุบลราชธานี"
+    # ตอน resolve follow-up) ถ้าเช็ค Obsidian ก่อน คำถามอุบัติเหตุที่มีชื่อจังหวัดเต็ม
+    # จะถูกชิงไปคลังความรู้ที่ไม่มีข้อมูลอุบัติเหตุเลย ทันที — ตรงกับบั๊กที่เจอจริง
+    # (ถามอุบัติเหตุอุบล ตามด้วย "ขอข้อมูลแต่ละอำเภอ" แล้วหลุดไป Obsidian)
+    if _has_accident_signal(prompt):
+        return DOMAINS["d1"]
+
+    # Fast path: Obsidian Knowledge Vault
+    if _has_obsidian_signal(prompt):
+        return DOMAINS["obsidian"]
+
     # Fast path: ThaiJo research journal
     if _has_thaijo_signal(prompt):
         return DOMAINS["dt"]
-
-    # Fast path: Road accidents (high-priority hard rule)
-    if _has_accident_signal(prompt):
-        return DOMAINS["d1"]
 
     # Fast path: no data/statistics signals → general knowledge, skip CSV domains
     if not _has_data_analysis_signal(prompt):
@@ -175,8 +316,8 @@ def route_domain(prompt: str, history_context: str = "") -> Domain:
     except Exception:
         result = "d0"
 
-    # Match dt or d0-d8
-    m = re.search(r'\b(dt|d[0-8])\b', result.lower())
+    # Match dt or d0-d4
+    m = re.search(r'\b(obsidian|dt|d[0-4])\b', result.lower())
     code = m.group(1) if m else "d0"
     return DOMAINS.get(code, DOMAINS["d0"])
 
@@ -188,8 +329,15 @@ def route_multi_domain(prompt: str, history_context: str = "") -> tuple[list[Dom
     Uses fast keyword check first; LLM refines the domain codes.
     """
     # Hard rule: accident questions should route to d1 pipeline, not CSV multi-domain
+    # ⚠️ ต้องเช็คก่อน Obsidian เสมอ — ดูคำอธิบายเต็มในคอมเมนต์ของ route_domain() ด้านบน
+    # (สรุปสั้น ๆ: ชื่อจังหวัดเขต 10 ที่อยู่ใน _OBSIDIAN_KEYWORDS ดันไปตรงกับชื่อจังหวัด
+    # ที่คำถามอุบัติเหตุมักระบุด้วยพอดี โดยเฉพาะหลัง Memory Agent ขยายชื่อย่อให้เต็ม)
     if _has_accident_signal(prompt):
         return [DOMAINS["d1"]], False
+
+    # Hard rule: obsidian knowledge vault
+    if _has_obsidian_signal(prompt):
+        return [DOMAINS["obsidian"]], False
 
     # Screen: no data/statistics signals → general knowledge, skip all CSV domains
     if not _has_data_analysis_signal(prompt):
@@ -221,15 +369,11 @@ def route_multi_domain(prompt: str, history_context: str = "") -> tuple[list[Dom
             f"{history_section}"
             f"คำถาม: {prompt}\n"
             f"{multi_hint}\n"
-            "กฎสำคัญ: ถ้าคำถามมีคำว่าอุบัติเหตุ/รถชน/RTI ให้ตอบ d1 เท่านั้น ห้ามเลือก d8\n"
+            "กฎสำคัญ: ถ้าคำถามมีคำว่าอุบัติเหตุ/รถชน/RTI ให้ตอบ d1 เท่านั้น\n"
             "Domains ที่มีไฟล์ CSV:\n"
             "- d2: สุขภาพจิต — ฆ่าตัวตาย ซึมเศร้า จิตเวช\n"
             "- d3: โรคไม่ติดต่อ (NCDs) — เบาหวาน ความดัน หัวใจ\n"
             "- d4: โภชนาการ — ภาวะอ้วน BMI วัยเรียน วัยทำงาน\n"
-            "- d5: ผู้สูงอายุ\n"
-            "- d6: โรคติดต่อ — ไข้เลือดออก มาลาเรีย วัณโรค\n"
-            "- d7: มะเร็ง\n"
-            "- d8: ประชากร\n"
             "- d0: ทั่วไป (ไม่มี CSV)\n"
             "- d1: อุบัติเหตุ (ใช้ฐานข้อมูล ไม่ใช่ CSV)\n\n"
             "เลือก domain codes ที่จำเป็น (สูงสุด 3 domain)\n"
@@ -245,11 +389,24 @@ def route_multi_domain(prompt: str, history_context: str = "") -> tuple[list[Dom
     except Exception:
         result = "d0"
 
-    codes = list(dict.fromkeys(re.findall(r'\b(d[0-8])\b', result)))[:3]
+    codes = list(dict.fromkeys(re.findall(r'\b(d[0-4])\b', result)))[:3]
     if not codes:
         codes = ["d0"]
 
     csv_codes = [c for c in codes if c in _CSV_DOMAIN_CODES]
+
+    # Guard: LLM claimed multi-domain but no independent multi-domain signal exists —
+    # cross-check against keyword evidence and drop any domain with zero support.
+    # Prevents e.g. "เบาหวานและความดัน" (purely d3/NCDs) from being inflated into
+    # "d2,d3" (+ Mental Health) by a router LLM hallucination, which then cascades
+    # into the File Finder loading unrelated files (suicide/self-harm/schizophrenia)
+    # and the Insight Analyst fabricating citations to explain the mismatch.
+    if len(csv_codes) >= 2 and not force_multi:
+        keyword_domains = set(_keyword_infer_domains(prompt))
+        if keyword_domains:
+            filtered = [c for c in csv_codes if c in keyword_domains]
+            if filtered:
+                csv_codes = filtered
 
     # Keyword said multi but LLM returned only 1 — infer missing domains from keywords
     if force_multi and len(csv_codes) < 2:
@@ -277,8 +434,13 @@ def route_with_web_search(prompt: str, history_context: str = "") -> tuple[str, 
         ("dN", DOMAINS["dN"])   — domain เฉพาะทาง
     """
     # Hard rule: accident queries should go to d1 directly
+    # ⚠️ ต้องเช็คก่อน Obsidian เสมอ — ดูคำอธิบายเต็มในคอมเมนต์ของ route_domain() ด้านบน
     if _has_accident_signal(prompt):
         return "d1", DOMAINS["d1"]
+
+    # Hard rule: obsidian knowledge vault
+    if _has_obsidian_signal(prompt):
+        return "obsidian", DOMAINS["obsidian"]
 
     router = Agent(
         role="Smart Router Agent",
@@ -317,6 +479,6 @@ def route_with_web_search(prompt: str, history_context: str = "") -> tuple[str, 
     if "tavily" in result:
         return "tavily", None
 
-    m = re.search(r'\b(d[0-8])\b', result)
+    m = re.search(r'\b(obsidian|d[0-4])\b', result)
     code = m.group(1) if m else "d0"
-    return code, DOMAINS[code]
+    return code, DOMAINS.get(code, DOMAINS["d0"])

@@ -4,13 +4,18 @@ from src.config import get_settings
 
 
 def _search(query: str, max_results: int = 2) -> str:
-    from tavily import TavilyClient
     api_key = get_settings().TAVILY_API_KEY
     if not api_key:
         return "ไม่พบ TAVILY_API_KEY — กรุณาตั้งค่าใน .env"
 
-    client = TavilyClient(api_key=api_key)
+    # ⚠️ import + client construction ต้องอยู่ใน try/except ด้วย — ถ้า package
+    # 'tavily-python' ไม่ได้ติดตั้ง (ModuleNotFoundError) หรือ key ผิดรูปแบบ
+    # ข้อผิดพลาดจะ "หลุด" ออกจากฟังก์ชันนี้แบบดิบ ๆ ทำให้ agent/tool พังทั้งกระบวนการ
+    # แทนที่จะได้ข้อความอธิบายที่ใช้งานต่อได้ — นี่คือสาเหตุหนึ่งที่ผู้ใช้เจอว่า
+    # "tavily_search ใช้ไม่ได้" (เดิม import อยู่นอก try แล้ว package ไม่ถูกติดตั้งจริง)
     try:
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=api_key)
         response = client.search(
             query=query,
             search_depth="advanced",

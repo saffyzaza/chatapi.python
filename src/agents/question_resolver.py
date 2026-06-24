@@ -1,4 +1,4 @@
-"""Memory Agent — แปลง follow-up question ให้ครบถ้วนโดยใช้บริบทการสนทนา"""
+﻿"""Memory Agent — แปลง follow-up question ให้ครบถ้วนโดยใช้บริบทการสนทนา"""
 import os
 import litellm
 from src.tools.error_logger import log_agent_error
@@ -38,7 +38,7 @@ def resolve_question(prompt: str, history_context: str, gemini_key: str) -> tupl
         return prompt, False
     try:
         resp = litellm.completion(
-            model="gemini/gemini-2.0-flash",
+            model="gemini/gemini-2.5-flash-lite",
             api_key=gemini_key,
             messages=[
                 {"role": "system", "content": _SYSTEM},

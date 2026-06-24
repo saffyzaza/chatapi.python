@@ -56,18 +56,51 @@ def agent_retry_kwargs() -> dict:
     return {"max_retry_limit": s.GEMINI_RETRY_LIMIT}
 
 
+_RETRYABLE_ERRORS = (
+    "429",
+    "RESOURCE_EXHAUSTED",
+    "None or empty",
+    "Invalid response from LLM",
+)
+
+
 def kickoff_with_retry(crew, max_attempts: int = 3):
-    """Run crew.kickoff() with automatic retry on 429 RESOURCE_EXHAUSTED."""
+    """Run crew.kickoff() with automatic retry on 429 RESOURCE_EXHAUSTED
+    and Gemini None/empty response errors.
+
+    If called from within a running event loop (e.g. FastAPI endpoint),
+    executes in a separate thread to avoid the sync-in-async error.
+    """
+    import concurrent.futures
+
     delay = get_settings().GEMINI_RETRY_DELAY
-    for attempt in range(1, max_attempts + 1):
-        try:
-            return crew.kickoff()
-        except Exception as e:
-            err = str(e)
-            if ("429" in err or "RESOURCE_EXHAUSTED" in err) and attempt < max_attempts:
-                logger.warning(
-                    "429 on attempt %d/%d — sleeping %ds", attempt, max_attempts, delay
-                )
-                time.sleep(delay)
-            else:
-                raise
+
+    def _run():
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return crew.kickoff()
+            except Exception as e:
+                err = str(e)
+                is_rate_limit = "429" in err or "RESOURCE_EXHAUSTED" in err
+                is_retryable = is_rate_limit or any(m in err for m in _RETRYABLE_ERRORS)
+                if is_retryable and attempt < max_attempts:
+                    sleep_secs = delay if is_rate_limit else 5
+                    logger.warning(
+                        "Retryable error on attempt %d/%d (%s) — sleeping %ds",
+                        attempt, max_attempts, err[:80], sleep_secs,
+                    )
+                    time.sleep(sleep_secs)
+                else:
+                    raise
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None and loop.is_running():
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run)
+            return future.result()
+    else:
+        return _run()

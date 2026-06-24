@@ -55,6 +55,21 @@ SQL_AGENT_PROMPT = """คุณคือ Accident Data Specialist ผู้เ�
 - fact_accident_person: ว่างทั้งหมด
 - road_name: ส่วนใหญ่ไม่ระบุ
 - ปีในฐานข้อมูล = ค.ศ. (CE); พ.ศ. = CE + 543
+
+**กฎเหล็ก — ห้ามละเมิด:**
+- query_behavior_stats คืนค่า "ว่าง" เสมอ → เรียกได้ **1 ครั้ง** เท่านั้น ถ้าได้ผล "ว่าง" ให้หยุดทันที ห้ามเรียกซ้ำด้วย query type อื่น
+- ถ้า tool ใดคืนค่า error หรือ "ว่าง" แล้ว → บันทึกผล แล้วข้ามไปทำขั้นตอนถัดไป ห้ามเรียก tool เดิมซ้ำ
+- เรียก tool รวมกันทั้งหมดไม่เกิน **4 ครั้ง** ต่อคำถาม
+- คำถาม follow-up ที่ระบุเฉพาะเจาะจง (เช่น "ขอแค่อำเภอ X" หรือ "เฉพาะปี Y") → ใช้ **tool เดียว** ที่ตรงที่สุด แล้วหยุด ห้ามเรียก tool เพิ่ม
+
+**ถ้ามี "ประวัติการสนทนาก่อนหน้า" แนบมาด้วย:**
+- ใช้ดูว่าก่อนหน้านี้ผู้ใช้ถามอะไรไปแล้ว และ AI เคยดึง/ตอบข้อมูลระดับใดไปแล้ว
+  (เช่น ภาพรวมจังหวัด, ช่วงเทศกาล, รายอำเภอ) เพื่อเลือกเครื่องมือที่ "ต่อยอด"
+  คำถามล่าสุดได้ตรงจุด — เช่น ถ้าก่อนหน้าตอบภาพรวมจังหวัดไปแล้ว แล้วคำถามนี้
+  ถามว่า "แต่ละอำเภอ" ให้เรียก query_district_summary หรือเครื่องมือระดับอำเภอ
+  เพิ่มเติม (อย่าเรียกซ้ำเครื่องมือเดิมที่ให้ผลลัพธ์เดียวกับที่เคยได้ไปแล้ว)
+- คำถามตามหลัง (follow-up) มักสั้นและไม่ระบุจังหวัด/ปี/หัวข้อซ้ำ — ให้อนุมานจาก
+  ประวัติการสนทนาเสมอ
 """
 
 ANSWER_AGENT_PROMPT = """คุณคือ RTI Policy Answer Writer ผู้เชี่ยวชาญด้านการสื่อสารข้อมูล
@@ -73,6 +88,19 @@ ANSWER_AGENT_PROMPT = """คุณคือ RTI Policy Answer Writer ผู้�
 - แปลงปี ค.ศ. เป็น พ.ศ. ทุกครั้ง (พ.ศ. = ค.ศ. + 543)
 - ใช้ตัวเลขจากข้อมูลที่ SQL Agent ให้มาเท่านั้น
 - ใช้ภาษาทางการ เหมาะสำหรับรายงานราชการ
+
+**ถ้ามี "ประวัติการสนทนาก่อนหน้า" แนบมาด้วย — ตอบต่อแบบบทสนทนาจริง (เหมือน Gemini/ChatGPT):**
+- อ่านดูว่าตัวเองเคยตอบอะไรไปแล้ว แล้ว "ต่อยอด" จากตรงนั้น อย่าเริ่มอธิบายซ้ำ
+  ตั้งแต่ต้นทุกครั้ง — ใช้รูปแบบ 5 ส่วนด้านบน "เฉพาะ" คำถามแรกของหัวข้อหนึ่ง ๆ
+  พอเป็นคำถามต่อเนื่อง (follow-up) ให้ตอบกระชับ ตรงประเด็นที่ถามเพิ่ม
+  โดยอ้างอิงสิ่งที่เคยให้ข้อมูลไปแล้วได้ตามธรรมชาติ เช่น
+  "จากข้อมูลภาพรวมที่ให้ไปก่อนหน้านี้ (อุบัติเหตุ 5 ครั้งช่วงปีใหม่) เมื่อแยกราย
+  อำเภอ พบว่า ..." แทนที่จะพูดถึงภาพรวมซ้ำใหม่ทั้งหมด
+- ถ้าตัวเลขชุดใหม่จาก SQL Agent ดู "ขัดแย้ง" หรือ "ไม่ตรง" กับที่เคยตอบไปก่อนหน้า
+  (เช่น มุมมอง/ตัวกรองต่างกัน) ให้อธิบายสั้น ๆ ว่าเพราะเหตุใดตัวเลขจึงต่างกัน
+  (เช่น "ตัวเลขนี้เป็นมุมมองรายอำเภอ ส่วนตัวเลขก่อนหน้าเป็นภาพรวมทั้งจังหวัด")
+  เพื่อไม่ให้ผู้ใช้สับสน — ห้ามเงียบเฉยปล่อยให้ตัวเลขดูขัดกันเฉย ๆ
+- ไม่ต้องขึ้นต้นด้วยการทักทายหรือแนะนำตัวซ้ำในคำถามต่อเนื่อง
 """
 
 
@@ -83,13 +111,15 @@ def _get_llm(tier: str = "fast") -> LLM:
     if tier == "pro":
         return LLM(
             model=f"gemini/{s.GEMINI_MODEL_PRO}",
+            api_key=s.GEMINI_API_KEY,
             temperature=0.2,
             max_tokens=s.REPORT_MAX_TOKENS,
         )
     return LLM(
         model=f"gemini/{s.GEMINI_MODEL}",
+        api_key=s.GEMINI_API_KEY,
         temperature=0.1,
-        max_tokens=4096,
+        max_tokens=8192,
     )
 
 
@@ -106,7 +136,7 @@ def _create_sql_agent(llm) -> Agent:
         tools=ACCIDENT_CHAT_TOOLS,
         llm=llm,
         verbose=True,
-        max_iter=8,
+        max_iter=4,
         **agent_retry_kwargs(),
     )
 
@@ -131,7 +161,14 @@ def _create_answer_agent(llm) -> Agent:
 
 # ── Core pipeline ─────────────────────────────────────────────────────────────
 
-def _build_crew(question: str, province: str, district: str, year_start: int, year_end: int):
+def _build_crew(
+    question: str,
+    province: str,
+    district: str,
+    year_start: int,
+    year_end: int,
+    history_context: str = "",
+):
     llm_fast = _get_llm("fast")
     llm_pro = _get_llm("pro")
 
@@ -141,15 +178,23 @@ def _build_crew(question: str, province: str, district: str, year_start: int, ye
     prov_label = province or "เขตสุขภาพที่ 10 (ทุกจังหวัด)"
     dist_label = f"อำเภอ{district.strip()}" if district.strip() else "ทุกอำเภอ"
     year_note = f"ค.ศ. {year_start}-{year_end} (พ.ศ. {year_start+543}-{year_end+543})"
+    # ⚠️ ต่อ "ความจำการสนทนา" เข้า task ทั้งสอง — ไม่งั้นทุกคำถามตามหลัง (follow-up)
+    # จะถูกประมวลผลแบบเริ่มนับหนึ่งใหม่ทุกครั้ง (ไม่รู้ว่าตอบอะไรไปแล้วบ้าง)
+    # ทำให้คุยต่อเนื่องไม่ได้เป็นธรรมชาติแบบ Gemini/ChatGPT — ตรงกับที่ผู้ใช้ติงมา
+    # (ใช้รูปแบบเดียวกับ history_section ใน csv_pipeline.py/multi_csv_pipeline.py)
+    history_section = f"{history_context}\n\n" if history_context else ""
 
     sql_task = Task(
         description=(
             SQL_AGENT_PROMPT + "\n\n"
+            f"{history_section}"
             f"**คำถาม:** {question}\n"
             f"**จังหวัด:** {prov_label}\n"
             f"**อำเภอ:** {dist_label}\n"
             f"**ช่วงปี:** {year_note}\n\n"
-            "เรียกเครื่องมือที่เกี่ยวข้อง รวบรวมข้อมูลทั้งหมดโดยไม่ตัดทอน"
+            "เรียกเครื่องมือที่เกี่ยวข้อง รวบรวมข้อมูลทั้งหมดโดยไม่ตัดทอน "
+            "(ถ้ามีประวัติการสนทนา ให้พิจารณาด้วยว่าคำถามนี้ต่อยอดจากเรื่องเดิม "
+            "อย่างไร แล้วเลือกเครื่องมือที่เติมเต็มส่วนที่ยังขาดอยู่)"
         ),
         expected_output="ข้อมูลดิบจาก SQL tools ครบถ้วน พร้อมระบุข้อจำกัดข้อมูล",
         agent=sql_agent,
@@ -158,11 +203,14 @@ def _build_crew(question: str, province: str, district: str, year_start: int, ye
     answer_task = Task(
         description=(
             ANSWER_AGENT_PROMPT + "\n\n"
+            f"{history_section}"
             f"**คำถามผู้ใช้:** {question}\n"
             f"**จังหวัด:** {prov_label}\n"
             f"**อำเภอ:** {dist_label}\n"
             f"**ช่วงปี:** {year_note}\n\n"
-            "เขียนคำตอบโดยใช้ข้อมูลจาก SQL Agent เท่านั้น"
+            "เขียนคำตอบโดยใช้ข้อมูลจาก SQL Agent เท่านั้น "
+            "(ถ้ามีประวัติการสนทนา ให้ตอบแบบต่อบทสนทนาเดิมอย่างเป็นธรรมชาติ "
+            "ตามแนวทางในคำสั่งด้านบน — ไม่ใช่เริ่มอธิบายใหม่ทั้งหมดทุกครั้ง)"
         ),
         expected_output=(
             "คำตอบภาษาไทย Markdown ครบ 5 ส่วน (สรุป/ตาราง/วิเคราะห์/ข้อเสนอ/ข้อจำกัด)"
@@ -238,12 +286,21 @@ def run_accident_chat(
     district: str = "",
     year_start: int = 2021,
     year_end: int = 2026,
+    history_context: str = "",
 ) -> AccidentChatResponse:
-    """Run the 2-agent accident chat pipeline (synchronous)."""
+    """Run the 2-agent accident chat pipeline (synchronous).
+
+    history_context: ข้อความสรุปประวัติการสนทนาก่อนหน้า (มาจาก build_history_context)
+    — ส่งต่อให้ทั้ง SQL Agent และ Answer Agent เพื่อให้ตอบคำถามต่อเนื่อง (follow-up)
+    ได้อย่างเป็นธรรมชาติ แทนที่จะเริ่มนับหนึ่งใหม่ทุกครั้งที่ถามต่อ (ดูคอมเมนต์ใน
+    _build_crew และ analyze.py:_orchestrate ที่ build_history_context มาจากตรงนั้น)
+    """
     start = time.time()
     logger.info("[ACCIDENT-CHAT] question=%s province=%s", question[:80], province or "Zone10")
 
-    crew, sql_task, answer_task = _build_crew(question, province, district, year_start, year_end)
+    crew, sql_task, answer_task = _build_crew(
+        question, province, district, year_start, year_end, history_context
+    )
     try:
         result = kickoff_with_retry(crew)
         elapsed = time.time() - start
@@ -270,12 +327,15 @@ def run_accident_chat_with_progress(
     year_start: int = 2021,
     year_end: int = 2026,
     request_id: str | None = None,
+    history_context: str = "",
 ) -> AccidentChatResponse:
-    """Same as run_accident_chat but emits SSE progress events."""
+    """Same as run_accident_chat but emits SSE progress events (+ history_context, see above)."""
     start = time.time()
     emit_progress(request_id, "Accident SQL Agent", "running", "กำลังดึงข้อมูลจากฐานข้อมูล...")
 
-    crew, sql_task, answer_task = _build_crew(question, province, district, year_start, year_end)
+    crew, sql_task, answer_task = _build_crew(
+        question, province, district, year_start, year_end, history_context
+    )
     try:
         result = kickoff_with_retry(crew)
         elapsed = time.time() - start

@@ -8,6 +8,14 @@ import sys
 import tempfile
 import urllib.parse
 
+# ── Local temp dir (สำหรับไฟล์ที่แนบผ่าน chat โดยไม่ผ่าน MinIO) ───────────────
+def _chat_tmp_dir() -> str:
+    return os.environ.get("CHAT_UPLOAD_TMP_DIR") or os.path.join(tempfile.gettempdir(), "chat_uploads")
+
+def _local_tmp_path(file_id: str) -> str | None:
+    p = os.path.join(_chat_tmp_dir(), file_id)
+    return p if os.path.exists(p) else None
+
 import minio as minio_lib
 import pandas as pd
 from crewai.tools import tool
@@ -33,6 +41,88 @@ def _bucket() -> str:
 # ── File map (object_name → display_name cache) ───────────────────────────────
 
 _file_map: dict[str, str] = {}
+
+
+# ── Path index (file_id → hierarchical folder path) ───────────────────────────
+# Object name ใน MinIO เป็นเลข ID ล้วนๆ (เช่น "264708") — path/หมวดหมู่จริง
+# ("D3_NCDs/โรคเบาหวาน/ร้อยละ.../file.csv") ถูกเก็บไว้ใน metadata 'x-amz-meta-path'
+# เท่านั้น ดังนั้น list_objects(prefix="D3_NCD") จะคืนค่าว่างเสมอ (ไม่ match object name)
+# เรา index path จริงไว้ครั้งเดียว (cache) เพื่อสร้าง "folder tree" ให้ agent นำทางได้
+# ก่อนเลือกไฟล์ — ชื่อโฟลเดอร์มักสื่อความหมาย/หมวดหมู่ได้ชัดกว่าชื่อไฟล์ที่ถูกตัดสั้น
+
+_path_index: dict[str, str] = {}
+_path_index_ready = False
+
+
+def _load_path_index(force: bool = False) -> dict[str, str]:
+    """สร้าง/cache file_id → path เต็มจาก x-amz-meta-path (สแกนครั้งเดียว ~50 ไฟล์)."""
+    global _path_index, _path_index_ready
+    if _path_index_ready and not force:
+        return _path_index
+    client = _get_client()
+    bucket = _bucket()
+    try:
+        for obj in client.list_objects(bucket, recursive=True):
+            name = obj.object_name
+            if not name or name.startswith("__"):
+                continue
+            try:
+                stat = client.stat_object(bucket, name)
+                meta = {k.lower(): v for k, v in (stat.metadata or {}).items()}
+                raw_path = meta.get("x-amz-meta-path", "")
+                path = urllib.parse.unquote(raw_path).strip() if raw_path else ""
+                if path:
+                    _path_index[name] = path
+                    _file_map[name] = name
+            except Exception:
+                continue
+        _path_index_ready = True
+    except Exception:
+        pass
+    return _path_index
+
+
+def list_csv_tree_impl(prefix: str = "") -> str:
+    """แสดง folder tree ของชุดข้อมูล (จาก path metadata จริง) แทนรายการไฟล์แบบ flat.
+
+    ให้ agent เลือก "ชื่อโฟลเดอร์ตัวชี้วัด" ที่ตรงหัวข้อคำถามก่อน — เพราะชื่อโฟลเดอร์
+    มักเป็นชื่อตัวชี้วัดแบบเต็มที่ไม่ถูกตัดสั้นเหมือนชื่อไฟล์ ตัวอย่างผลลัพธ์:
+
+        📁 D3_NCDs/
+          📁 โรคเบาหวาน/
+            📁 ร้อยละของผู้ป่วยเบาหวานชนิดที่ 2 ที่เข้าสู่โรคเบาหวานระยะสงบ (DM remission)/
+              📄 [ID:264708] ร้อยละของผู้ป่วยเบาหวานชนิดที่ 2 2569.csv
+    """
+    index = _load_path_index()
+    if not index:
+        return "ไม่พบ path metadata ในระบบ — ใช้ list_csv_files แทน"
+
+    entries = [(fid, p) for fid, p in index.items()
+               if not prefix or p.lower().startswith(prefix.lower())]
+    if not entries:
+        entries = list(index.items())  # prefix ไม่ตรงผลใดเลย → แสดงทั้งหมดแทนค่าว่าง
+
+    tree: dict = {}
+    for fid, path in entries:
+        parts = [seg for seg in path.split("/") if seg]
+        if not parts:
+            continue
+        node = tree
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node.setdefault("__files__", []).append((parts[-1], fid))
+
+    lines: list[str] = []
+
+    def render(node: dict, depth: int) -> None:
+        for key in sorted(k for k in node if k != "__files__"):
+            lines.append("  " * depth + f"📁 {key}/")
+            render(node[key], depth + 1)
+        for fname, fid in sorted(node.get("__files__", [])):
+            lines.append("  " * depth + f"📄 [ID:{fid}] {fname}")
+
+    render(tree, 0)
+    return "\n".join(lines) if lines else "ไม่พบไฟล์"
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -117,41 +207,61 @@ def fallback_find_file(prompt: str, domain_prefix: str = "") -> str:
     return max(lines, key=score)
 
 
+def _csv_schema_from_bytes(data: bytes, file_id: str, display_name: str) -> str:
+    """Parse CSV bytes → schema JSON."""
+    df = pd.read_csv(io.BytesIO(data))
+    return json.dumps(
+        {
+            "file_id": file_id,
+            "file_name": display_name,
+            "shape": list(df.shape),
+            "columns": list(df.columns),
+            "dtypes": {c: str(t) for c, t in df.dtypes.items()},
+            "sample": df.head(3).to_dict(orient="records"),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
 def read_csv_schema_impl(file_ref: str) -> str:
     file_id = resolve_file_id(file_ref)
     display_name = next(
         (k for k, v in _file_map.items() if v == file_id and k != file_id),
         file_id,
     )
+    # ── local temp first (ไฟล์แนบจาก chat ไม่ผ่าน MinIO) ─────────────────
+    local = _local_tmp_path(file_id)
+    if local:
+        try:
+            with open(local, "rb") as f:
+                return _csv_schema_from_bytes(f.read(), file_id, display_name)
+        except Exception as exc:
+            return f"Error reading schema for '{file_id}': {exc}"
+    # ── fallback: MinIO ───────────────────────────────────────────────────
     client = _get_client()
     try:
         resp = client.get_object(_bucket(), file_id)
-        df = pd.read_csv(io.BytesIO(resp.read()))
-        return json.dumps(
-            {
-                "file_id": file_id,
-                "file_name": display_name,
-                "shape": list(df.shape),
-                "columns": list(df.columns),
-                "dtypes": {c: str(t) for c, t in df.dtypes.items()},
-                "sample": df.head(3).to_dict(orient="records"),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
+        return _csv_schema_from_bytes(resp.read(), file_id, display_name)
     except Exception as exc:
         return f"Error reading schema for '{file_id}': {exc}"
 
 
 def read_file_bytes_impl(file_id: str) -> bytes:
-    """Read raw bytes from a MinIO object."""
+    """Read raw bytes — local temp dir first, fallback to MinIO."""
+    local = _local_tmp_path(file_id)
+    if local:
+        with open(local, "rb") as f:
+            return f.read()
     client = _get_client()
     resp = client.get_object(_bucket(), file_id)
     return resp.read()
 
 
 def read_file_extension_impl(file_id: str) -> str:
-    """Get file extension from MinIO metadata."""
+    """Get file extension — local temp files return '' (caller uses filename fallback)."""
+    if _local_tmp_path(file_id):
+        return ""  # ให้ caller ใช้ extension จาก filename แทน
     client = _get_client()
     try:
         stat = client.stat_object(_bucket(), file_id)
@@ -161,7 +271,6 @@ def read_file_extension_impl(file_id: str) -> str:
             return ext
     except Exception:
         pass
-    # Fallback: infer from file_id or file_map
     dot = file_id.rfind(".")
     if dot >= 0:
         return file_id[dot + 1:].lower()
@@ -169,7 +278,7 @@ def read_file_extension_impl(file_id: str) -> str:
 
 
 def read_file_text_impl(file_id: str, extension: str = "") -> str:
-    """Extract text content from any file type in MinIO.
+    """Extract text content — local temp dir first, fallback to MinIO.
 
     Returns:
       - CSV/XLSX: JSON schema + sample rows
@@ -177,10 +286,15 @@ def read_file_text_impl(file_id: str, extension: str = "") -> str:
       - DOCX/DOC: extracted paragraph text
       - other: raw UTF-8 decode (first 10 000 chars)
     """
-    client = _get_client()
+    local = _local_tmp_path(file_id)
     try:
-        resp = client.get_object(_bucket(), file_id)
-        content: bytes = resp.read()
+        if local:
+            with open(local, "rb") as f:
+                content: bytes = f.read()
+        else:
+            client = _get_client()
+            resp = client.get_object(_bucket(), file_id)
+            content = resp.read()
     except Exception as exc:
         return f"Error reading file '{file_id}': {exc}"
 
@@ -240,10 +354,14 @@ def minio_preamble() -> str:
     secure = s.MINIO_USE_SSL
     bucket = s.MINIO_BUCKET
     return (
-        f"import pandas as pd, io, minio as _m\n"
+        f"import pandas as pd, io, os, tempfile, minio as _m\n"
         f"_c = _m.Minio('{endpoint}', access_key='{access_key}', "
         f"secret_key='{secret_key}', secure={secure})\n"
-        f"def load_csv(path): return pd.read_csv(io.BytesIO(_c.get_object('{bucket}', path).read()))\n"
+        f"def load_csv(path):\n"
+        f"    _tmp = os.path.join(os.environ.get('CHAT_UPLOAD_TMP_DIR', "
+        f"os.path.join(tempfile.gettempdir(), 'chat_uploads')), path)\n"
+        f"    if os.path.isfile(_tmp): return pd.read_csv(_tmp)\n"
+        f"    return pd.read_csv(io.BytesIO(_c.get_object('{bucket}', path).read()))\n"
         # ── Analysis helpers available to generated code ──────────────────────
         f"def pct_rank(s):\n"
         f"    \"\"\"Percentile rank 0-100, NaN → 0.\"\"\"\n"
@@ -287,6 +405,16 @@ def exec_python(code: str, timeout: int = 90) -> str:
 def list_csv_files(prefix: str = "") -> str:
     """List all CSV files in MinIO storage. Each line format: [ID:xxxxxx] filename.csv"""
     return list_csv_files_impl(prefix)
+
+
+@tool("list_csv_tree")
+def list_csv_tree(prefix: str = "") -> str:
+    """Show the folder/category tree of CSV datasets, built from each file's real path
+    metadata (e.g. 'D3_NCDs/โรคเบาหวาน/<full metric name>/file.csv'). Use this FIRST to
+    find which topic/metric folder matches the question — folder names carry the full,
+    untruncated metric description, unlike file names which are often shortened.
+    Optional `prefix` filters to one domain branch (e.g. 'D3_NCDs')."""
+    return list_csv_tree_impl(prefix)
 
 
 @tool("read_csv_schema")

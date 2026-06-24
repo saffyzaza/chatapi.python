@@ -1,4 +1,4 @@
-"""Error Monitor Agent — reads aggregated error logs and generates Thai-language analysis.
+﻿"""Error Monitor Agent — reads aggregated error logs and generates Thai-language analysis.
 
 Usage:
     from src.agents.error_monitor_agent import run_error_monitor
@@ -13,7 +13,7 @@ from src.tools.error_logger import read_all_errors, aggregate_errors
 
 
 def _get_llm() -> LLM:
-    return LLM(model="gemini/gemini-2.0-flash", api_key=os.getenv("GEMINI_API_KEY"))
+    return LLM(model="gemini/gemini-2.5-flash-lite", api_key=os.getenv("GEMINI_API_KEY"))
 
 
 def run_error_monitor(days: int = 7) -> dict:

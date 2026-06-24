@@ -15,6 +15,9 @@ from src.routers.analyze import router as analyze_router
 from src.routers.error_log import router as error_log_router
 from src.routers.thaijo import router as thaijo_router
 from src.routers.tools_router import router as tools_router
+from src.routers.obsidian import router as obsidian_router
+from src.routers.db_explorer import router as db_explorer_router
+from src.routers.pdf_ingest import router as pdf_ingest_router
 
 load_dotenv()
 
@@ -45,6 +48,9 @@ app.include_router(accident_policy_router)
 app.include_router(error_log_router)
 app.include_router(thaijo_router)
 app.include_router(tools_router)
+app.include_router(obsidian_router)
+app.include_router(db_explorer_router)
+app.include_router(pdf_ingest_router)
 
 # ── Static UI pages ──────────────────────────────────────────────────────────
 _STATIC_DIR = Path(__file__).parent / "src" / "static"
@@ -61,6 +67,7 @@ _UI_PAGES = [
     ("db_explorer_ui.html",         "🗄️ DB Explorer",             "สำรวจ Database Tables"),
     ("thaijo_research_ui.html",     "🔬 ThaiJO Research",          "ค้นหางานวิจัย ThaiJO"),
     ("test_ui.html",                "🧪 Test UI",                  "ทดสอบ Tools & Pipeline"),
+    ("obsidian_knowledge_ui.html",   "🌿 Obsidian Knowledge Vault",  "คลังความรู้สุขภาพ เขตสุขภาพที่ 10"),
 ]
 
 

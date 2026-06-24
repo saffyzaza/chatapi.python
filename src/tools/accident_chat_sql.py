@@ -20,6 +20,65 @@ logger = logging.getLogger(__name__)
 
 ZONE10_PROVINCES = ["อุบลราชธานี", "ศรีสะเกษ", "ยโสธร", "อำนาจเจริญ", "มุกดาหาร"]
 
+# คำพ้อง/รูปย่อ ที่หมายถึงจังหวัดเขต 10 (ใช้ตรวจว่า prompt พูดถึงจังหวัดในเขตหรือไม่)
+_ZONE10_ALIASES = {
+    "อุบล": "อุบลราชธานี", "อุบลราชธานี": "อุบลราชธานี",
+    "ศรีสะเกษ": "ศรีสะเกษ",
+    "ยโสธร": "ยโสธร", "ยโส": "ยโสธร",
+    "อำนาจเจริญ": "อำนาจเจริญ", "อำนาจ": "อำนาจเจริญ",
+    "มุกดาหาร": "มุกดาหาร", "มุก": "มุกดาหาร",
+}
+
+# จังหวัดไทยทั้งหมดที่ "ไม่ได้อยู่เขตสุขภาพที่ 10" — ใช้แจ้งเตือนเมื่อผู้ใช้ถามนอกพื้นที่
+# (ระบบนี้มีข้อมูลเฉพาะ 5 จังหวัดเขต 10 ทั้งใน SQL และคลังความรู้ Obsidian)
+_OTHER_PROVINCES = [
+    # ภาคอีสานที่ไม่ใช่เขต 10
+    "กาฬสินธุ์", "ขอนแก่น", "ชัยภูมิ", "นครพนม", "นครราชสีมา", "บึงกาฬ",
+    "บุรีรัมย์", "มหาสารคาม", "ร้อยเอ็ด", "เลย", "สกลนคร", "สุรินทร์",
+    "หนองคาย", "หนองบัวลำภู", "อุดรธานี",
+    # ภาคเหนือ
+    "กำแพงเพชร", "เชียงราย", "เชียงใหม่", "ตาก", "นครสวรรค์", "น่าน",
+    "พะเยา", "พิจิตร", "พิษณุโลก", "เพชรบูรณ์", "แพร่", "แม่ฮ่องสอน",
+    "ลำปาง", "ลำพูน", "สุโขทัย", "อุตรดิตถ์", "อุทัยธานี",
+    # ภาคกลาง/ตะวันออก/ตะวันตก
+    "กรุงเทพ", "กาญจนบุรี", "จันทบุรี", "ฉะเชิงเทรา", "ชลบุรี", "ชัยนาท",
+    "ตราด", "นครนายก", "นครปฐม", "นนทบุรี", "ปทุมธานี", "ประจวบคีรีขันธ์",
+    "ปราจีนบุรี", "พระนครศรีอยุธยา", "เพชรบุรี", "ระยอง", "ราชบุรี", "ลพบุรี",
+    "สมุทรปราการ", "สมุทรสงคราม", "สมุทรสาคร", "สระแก้ว", "สระบุรี",
+    "สิงห์บุรี", "สุพรรณบุรี", "อ่างทอง",
+    # ภาคใต้
+    "กระบี่", "ชุมพร", "ตรัง", "นครศรีธรรมราช", "นราธิวาส", "ปัตตานี",
+    "พังงา", "พัทลุง", "ภูเก็ต", "ยะลา", "ระนอง", "สงขลา", "สตูล",
+    "สุราษฎร์ธานี",
+]
+
+# ชื่อจังหวัดที่เป็นคำพ้องกับคำไทยทั่วไป — ต้องมี "จังหวัด" / "จ." นำหน้าจึงนับ
+# (กันการ false positive เช่น "เลย" = คำกริยา, "ตาก" = ตากแดด, "น่าน" = สรรพนาม)
+_AMBIGUOUS_PROVINCES = {"เลย", "ตาก", "น่าน", "ตราด", "แพร่"}
+
+
+def detect_out_of_zone10_provinces(text: str) -> list[str]:
+    """คืนรายชื่อจังหวัดใน prompt ที่อยู่ "นอกเขตสุขภาพที่ 10" (เรียงตามที่พบ ไม่ซ้ำ)."""
+    found: list[str] = []
+    for prov in _OTHER_PROVINCES:
+        if prov in _AMBIGUOUS_PROVINCES:
+            if f"จังหวัด{prov}" in text or f"จ.{prov}" in text or f"จ. {prov}" in text:
+                if prov not in found:
+                    found.append(prov)
+        elif prov in text and prov not in found:
+            found.append(prov)
+    return found
+
+
+def detect_zone10_provinces(text: str) -> list[str]:
+    """คืนรายชื่อจังหวัดเขต 10 ที่ถูกพูดถึงใน prompt (เรียงไม่ซ้ำ)."""
+    found: list[str] = []
+    for alias, full in _ZONE10_ALIASES.items():
+        if alias in text and full not in found:
+            found.append(full)
+    return found
+
+
 _PERSON_EMPTY_NOTE = (
     "⚠️ ข้อจำกัดข้อมูล: ตาราง fact_accident_person ไม่มีข้อมูล "
     "(CSV แหล่งนี้ไม่มีข้อมูลระดับบุคคล เช่น การสวมหมวก การคาดเข็มขัด อายุ เพศ)"
@@ -54,6 +113,17 @@ def _serialize_rows(rows: list) -> list[dict]:
                 r[k] = v
         clean.append(r)
     return clean
+
+
+_MAX_TOOL_OUTPUT = 1500  # ตัวอักษรสูงสุดต่อ tool เพื่อป้องกัน context overflow
+
+
+def _cap_output(text: str, label: str = "") -> str:
+    """ตัด output ที่ยาวเกิน _MAX_TOOL_OUTPUT ตัวอักษร พร้อมแจ้งจำนวนที่ถูกตัด"""
+    if len(text) <= _MAX_TOOL_OUTPUT:
+        return text
+    suffix = f"\n... (ตัดออก {len(text) - _MAX_TOOL_OUTPUT} ตัวอักษร — ข้อมูลหลักอยู่ด้านบน)"
+    return text[:_MAX_TOOL_OUTPUT] + suffix
 
 
 # ── Group 1: Hotspot & Engineering ───────────────────────────────────────────
@@ -129,7 +199,7 @@ def query_hotspot_roads(province: str = "", top_n: int = 10,
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_hotspot_roads(province, top_n, year_start, year_end)
+    return _cap_output(_query_hotspot_roads(province, top_n, year_start, year_end))
 
 
 def _query_road_district_breakdown(province: str, road_name: str,
@@ -186,34 +256,87 @@ def query_road_district_breakdown(province: str = "", road_name: str = "",
     return _query_road_district_breakdown(province, road_name, year_start, year_end)
 
 
+def _road_type_label(road_type: str | None, location: str | None) -> str:
+    """Classify road type from dim_road_segment.road_type or accident_location text."""
+    t = (road_type or "").lower()
+    loc = (location or "").lower()
+    if any(k in t for k in ("สายหลัก", "ทางหลวงแผ่นดิน", "national", "ทล.")):
+        return "สายหลัก"
+    if any(k in t for k in ("สายรอง", "ชนบท", "rural", "ทช.")):
+        return "สายรอง"
+    if any(k in loc for k in ("ทางหลวงแผ่นดิน", "สายหลัก", " ทล.", "highway")):
+        return "สายหลัก"
+    if any(k in loc for k in ("ทางหลวงชนบท", "สายรอง", " ทช.", "rural")):
+        return "สายรอง"
+    return "ไม่ระบุ"
+
+
 def _query_district_road_comparison(province: str, year_start: int = 2021, year_end: int = 2026) -> str:
-    clause, params = _province_ilike_clause("", province)
-    sql = f"""
+    prov_label = province.strip() or "เขตสุขภาพที่ 10"
+    year_label = f"พ.ศ. {_ce_to_be(year_start)}-{_ce_to_be(year_end)}"
+
+    # ── ลอง mart_province_road ก่อน (เร็วกว่า) ──────────────────────────────
+    clause_m, params_m = _province_ilike_clause("", province)
+    sql_mart = f"""
         SELECT district_name, province_name,
-               SUM(accident_count) AS total_acc,
-               SUM(death_count) AS total_deaths,
-               SUM(serious_injured) AS total_serious,
+               COALESCE(SUM(death_count), 0)    AS total_deaths,
+               COALESCE(SUM(accident_count), 0) AS total_acc,
                COALESCE(SUM(CASE WHEN road_type_label = 'สายหลัก' THEN death_count ELSE 0 END), 0) AS main_deaths,
-               COALESCE(SUM(CASE WHEN road_type_label = 'สายรอง' THEN death_count ELSE 0 END), 0) AS secondary_deaths,
-               COALESCE(SUM(CASE WHEN road_type_label = 'ไม่ระบุ' THEN death_count ELSE 0 END), 0) AS unknown_deaths,
-               COALESCE(SUM(CASE WHEN road_type_label = 'สายหลัก' THEN accident_count ELSE 0 END), 0) AS main_acc,
-               COALESCE(SUM(CASE WHEN road_type_label = 'สายรอง' THEN accident_count ELSE 0 END), 0) AS secondary_acc
+               COALESCE(SUM(CASE WHEN road_type_label = 'สายรอง'  THEN death_count ELSE 0 END), 0) AS secondary_deaths
         FROM mart_province_road
-        WHERE {clause} AND year_no BETWEEN %s AND %s
+        WHERE {clause_m} AND year_no BETWEEN %s AND %s
         GROUP BY district_name, province_name
         ORDER BY province_name, district_name
     """
     try:
-        rows = query_db(sql, tuple(params + [year_start, year_end]))
-    except Exception as exc:
-        return f"ไม่สามารถดึงข้อมูลอำเภอได้: {exc}"
+        rows = query_db(sql_mart, tuple(params_m + [year_start, year_end]))
+    except Exception:
+        rows = []
+
+    # ── Fallback: fact_accident_event + dim_geography + dim_road_segment ─────
+    if not rows:
+        clause_g, params_g = _province_ilike_clause("g", province)
+        sql_fact = f"""
+            SELECT
+                g.district_name,
+                g.province_name,
+                COUNT(*)                                    AS total_acc,
+                COALESCE(SUM(e.death_count),    0)          AS total_deaths,
+                COALESCE(SUM(e.serious_injured),0)          AS total_serious,
+                COALESCE(SUM(CASE
+                    WHEN COALESCE(rs.road_type,'') ILIKE ANY(ARRAY['%สายหลัก%','%ทางหลวงแผ่นดิน%','%national%'])
+                      OR COALESCE(e.accident_location,'') ILIKE ANY(ARRAY['%ทางหลวงแผ่นดิน%','%สายหลัก%','% ทล.%'])
+                    THEN e.death_count ELSE 0 END), 0)      AS main_deaths,
+                COALESCE(SUM(CASE
+                    WHEN COALESCE(rs.road_type,'') ILIKE ANY(ARRAY['%สายรอง%','%ชนบท%','%rural%'])
+                      OR COALESCE(e.accident_location,'') ILIKE ANY(ARRAY['%ทางหลวงชนบท%','%สายรอง%','% ทช.%'])
+                    THEN e.death_count ELSE 0 END), 0)      AS secondary_deaths
+            FROM fact_accident_event  e
+            JOIN  dim_geography        g  ON e.geography_id     = g.geography_id
+            LEFT JOIN dim_road_segment rs ON e.road_segment_id  = rs.road_segment_id
+            WHERE {clause_g}
+              AND (e.csv_year BETWEEN %s AND %s OR e.csv_year IS NULL)
+            GROUP BY g.district_name, g.province_name
+            HAVING SUM(e.death_count) > 0
+            ORDER BY g.province_name, total_deaths DESC
+        """
+        try:
+            rows = query_db(sql_fact, tuple(params_g + [year_start, year_end]))
+        except Exception as exc:
+            return f"ไม่สามารถดึงข้อมูลอำเภอได้: {exc}"
+
     if not rows:
         return f"ไม่พบข้อมูลอำเภอสำหรับ '{province}'"
 
-    prov_label = province.strip() or "เขตสุขภาพที่ 10"
-    year_label = f"พ.ศ. {_ce_to_be(year_start)}-{_ce_to_be(year_end)}"
+    # ── สรุปผล ────────────────────────────────────────────────────────────────
+    has_road_type = any((r.get("main_deaths") or 0) + (r.get("secondary_deaths") or 0) > 0 for r in rows)
     lines = [
         f"[District Road Comparison] เสียชีวิตบนถนนสายหลัก/สายรอง — {prov_label} ({year_label})",
+    ]
+    if not has_road_type:
+        lines.append("  ⚠️ ไม่พบข้อมูลประเภทถนน (road_type) ในฐานข้อมูล — แสดงยอดเสียชีวิตรวมรายอำเภอแทน")
+
+    lines += [
         f"  {'อำเภอ':<22} {'จังหวัด':<15} {'เสียชีวิตรวม':>12} {'สายหลัก':>10} {'สายรอง':>10}",
         "  " + "-" * 80,
     ]
@@ -222,6 +345,18 @@ def _query_district_road_comparison(province: str, year_start: int = 2021, year_
             f"  {(r['district_name'] or 'ไม่ระบุ'):<22} {r['province_name']:<15} "
             f"{r['total_deaths'] or 0:>12,} {r['main_deaths'] or 0:>10,} {r['secondary_deaths'] or 0:>10,}"
         )
+
+    if has_road_type:
+        above = [r for r in rows if (r.get("secondary_deaths") or 0) > (r.get("main_deaths") or 0)]
+        if above:
+            lines.append(f"\n  อำเภอที่เสียชีวิตสายรอง > สายหลัก ({len(above)} อำเภอ):")
+            for r in above[:10]:
+                lines.append(
+                    f"    {(r['district_name'] or 'ไม่ระบุ'):<22} {r['province_name']:<15} "
+                    f"สายรอง {r['secondary_deaths'] or 0:,} vs สายหลัก {r['main_deaths'] or 0:,}"
+                )
+        else:
+            lines.append("  ไม่พบอำเภอที่เสียชีวิตบนถนนสายรองมากกว่าสายหลัก")
     return "\n".join(lines)
 
 
@@ -234,37 +369,116 @@ def query_district_road_comparison(province: str = "", year_start: int = 2021, y
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_district_road_comparison(province, year_start, year_end)
+    return _cap_output(_query_district_road_comparison(province, year_start, year_end))
 
 
-def _query_fatal_timeband(province: str, year_start: int = 2021, year_end: int = 2026) -> str:
+def _query_fatal_timeband(province: str, district: str = "",
+                          year_start: int = 2021, year_end: int = 2026) -> str:
+    prov_label = province.strip() or "เขตสุขภาพที่ 10"
+    dist_label = f" > {district.strip()}" if district.strip() else ""
+    year_label = f"พ.ศ. {_ce_to_be(year_start)}-{_ce_to_be(year_end)}"
+
     clause, params = _province_ilike_clause("g", province)
-    sql = f"""
+    if district.strip():
+        clause += " AND g.district_name ILIKE %s"
+        params  = params + [f"%{district.strip()}%"]
+
+    # ── ลองดึงรายชั่วโมงก่อน (ต้องมี event_datetime) ─────────────────────────
+    sql_hr = f"""
         SELECT EXTRACT(HOUR FROM e.event_datetime)::int AS hour_of_day,
                COUNT(*) AS all_accidents,
                COUNT(*) FILTER (WHERE e.death_count > 0) AS fatal_accidents,
-               COALESCE(SUM(e.death_count), 0) AS total_deaths,
-               COALESCE(SUM(e.serious_injured), 0) AS total_serious
+               COALESCE(SUM(e.death_count),    0) AS total_deaths,
+               COALESCE(SUM(e.serious_injured),0) AS total_serious
         FROM fact_accident_event e
         JOIN dim_geography g ON e.geography_id = g.geography_id
-        WHERE {clause} AND e.event_datetime IS NOT NULL
+        WHERE {clause}
+          AND e.event_datetime IS NOT NULL
           AND (e.csv_year BETWEEN %s AND %s OR e.csv_year IS NULL)
         GROUP BY hour_of_day
         ORDER BY total_deaths DESC
         LIMIT 24
     """
     try:
-        rows = query_db(sql, tuple(params + [year_start, year_end]))
+        rows = query_db(sql_hr, tuple(params + [year_start, year_end]))
     except Exception as exc:
         return f"ไม่สามารถดึงข้อมูลช่วงเวลาได้: {exc}"
-    if not rows:
-        return f"ไม่พบข้อมูลช่วงเวลาสำหรับ '{province}'"
 
-    prov_label = province.strip() or "เขตสุขภาพที่ 10"
-    year_label = f"พ.ศ. {_ce_to_be(year_start)}-{_ce_to_be(year_end)}"
+    # ── Fallback 1: high_risk_timeband จาก mart_accident_summary ──────────────
+    if not rows:
+        clause_m, params_m = _province_ilike_clause("ms", province)
+        if district.strip():
+            clause_m += " AND g.district_name ILIKE %s"
+            params_m  = params_m + [f"%{district.strip()}%"]
+        sql_fb = f"""
+            SELECT ms.high_risk_timeband AS timeband,
+                   SUM(ms.death_count)    AS total_deaths,
+                   SUM(ms.accident_count) AS all_accidents
+            FROM mart_accident_summary ms
+            JOIN dim_geography g ON ms.geography_id = g.geography_id
+            WHERE {clause_m}
+              AND ms.year_no BETWEEN %s AND %s
+              AND ms.high_risk_timeband IS NOT NULL
+            GROUP BY timeband
+            ORDER BY total_deaths DESC
+            LIMIT 10
+        """
+        try:
+            fb = query_db(sql_fb, tuple(params_m + [year_start, year_end]))
+        except Exception:
+            fb = []
+
+        if fb:
+            lines = [
+                f"[Fatal Timeband — สรุปช่วงเวลา] {prov_label}{dist_label} ({year_label})",
+                f"  ⚠️ ไม่มีข้อมูลระดับชั่วโมง — แสดง high_risk_timeband จาก mart_accident_summary แทน",
+                f"  {'ช่วงเวลาเสี่ยง':<25} {'เสียชีวิต':>10} {'อุบัติเหตุ':>12}",
+                "  " + "-" * 52,
+            ]
+            for r in fb:
+                lines.append(
+                    f"  {(r['timeband'] or 'ไม่ระบุ'):<25} "
+                    f"{r['total_deaths'] or 0:>10,} {r['all_accidents'] or 0:>12,}"
+                )
+            return "\n".join(lines)
+
+        # ── Fallback 2: สถิติรายอำเภอ ไม่มีข้อมูลเวลาเลย ─────────────────────
+        sql_dist = f"""
+            SELECT g.district_name, g.province_name,
+                   COUNT(*) AS accidents,
+                   COALESCE(SUM(e.death_count),0) AS deaths
+            FROM fact_accident_event e
+            JOIN dim_geography g ON e.geography_id = g.geography_id
+            WHERE {clause}
+              AND (e.csv_year BETWEEN %s AND %s OR e.csv_year IS NULL)
+            GROUP BY g.district_name, g.province_name
+            HAVING SUM(e.death_count) > 0
+            ORDER BY deaths DESC LIMIT 15
+        """
+        try:
+            dist_rows = query_db(sql_dist, tuple(params + [year_start, year_end]))
+        except Exception:
+            dist_rows = []
+
+        if dist_rows:
+            lines = [
+                f"[Fatal Timeband — ไม่มีข้อมูลเวลา] {prov_label}{dist_label} ({year_label})",
+                f"  ⚠️ ข้อมูลไม่มีเวลาเกิดเหตุ (event_datetime = NULL) — แสดงสถิติรายอำเภอแทน",
+                f"  {'อำเภอ':<22} {'จังหวัด':<15} {'อุบัติเหตุ':>10} {'เสียชีวิต':>10}",
+                "  " + "-" * 65,
+            ]
+            for r in dist_rows:
+                lines.append(
+                    f"  {(r['district_name'] or 'ไม่ระบุ'):<22} {r['province_name']:<15} "
+                    f"{r['accidents'] or 0:>10,} {r['deaths'] or 0:>10,}"
+                )
+            return "\n".join(lines)
+
+        return f"ไม่พบข้อมูลช่วงเวลาสำหรับ '{prov_label}{dist_label}'"
+
     top5 = {r["hour_of_day"] for r in rows[:5]}
     lines = [
-        f"[Fatal Timeband] ช่วงเวลาที่มีผู้เสียชีวิต — {prov_label} ({year_label})",
+        f"[Fatal Timeband] ช่วงเวลาที่มีผู้เสียชีวิต — {prov_label}{dist_label} ({year_label})",
         f"  {'ชั่วโมง':>7} {'เสียชีวิต':>10} {'อุบัติ(มีตาย)':>13} {'อุบัติ(ทั้งหมด)':>15} {'สาหัส':>7}  ความเสี่ยง",
         "  " + "-" * 70,
     ]
@@ -281,15 +495,17 @@ def _query_fatal_timeband(province: str, year_start: int = 2021, year_end: int =
 
 
 @tool("query_fatal_timeband")
-def query_fatal_timeband(province: str = "", year_start: int = 2021, year_end: int = 2026) -> str:
-    """Group 1 Q3: ช่วงเวลาที่มีผู้เสียชีวิตสูงสุด เพื่อจัด EMS และตั้งจุดสกัด.
+def query_fatal_timeband(province: str = "", district: str = "",
+                         year_start: int = 2021, year_end: int = 2026) -> str:
+    """Group 1 Q3: ช่วงเวลาที่มีผู้เสียชีวิตสูงสุด — รองรับระดับอำเภอ + fallback เมื่อไม่มี event_datetime.
 
     Args:
-        province: ชื่อจังหวัด หรือ ''
+        province: ชื่อจังหวัด (ภาษาไทย) หรือ '' สำหรับเขต 10
+        district: ชื่ออำเภอ (ภาษาไทย) หรือ '' สำหรับทุกอำเภอ
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_fatal_timeband(province, year_start, year_end)
+    return _cap_output(_query_fatal_timeband(province, district, year_start, year_end))
 
 
 def _query_weather_accident_stats(province: str, year_start: int = 2021, year_end: int = 2026) -> str:
@@ -338,7 +554,7 @@ def query_weather_accident_stats(province: str = "", year_start: int = 2021, yea
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_weather_accident_stats(province, year_start, year_end)
+    return _cap_output(_query_weather_accident_stats(province, year_start, year_end))
 
 
 # ── Group 2: Behavioral — fact_accident_person EMPTY ─────────────────────────
@@ -348,22 +564,22 @@ def _person_data_unavailable(topic: str) -> str:
 
 
 @tool("query_behavior_stats")
-def query_behavior_stats(topic: str = "helmet") -> str:
+def query_behavior_stats(topic: str = "all") -> str:
     """Group 2 Q6-Q10: ข้อมูลพฤติกรรมเสี่ยง (หมวก/เข็มขัด/อายุ/เพศ).
 
-    ⚠️ ไม่มีข้อมูล: fact_accident_person ว่าง
+    ⚠️ ไม่มีข้อมูล: fact_accident_person ว่างทั้งหมด — ไม่ว่าจะเรียก topic ใดก็ตาม
+    ผลลัพธ์จะเหมือนกันทุก topic: ไม่มีข้อมูล
+    ให้เรียก tool นี้ **1 ครั้งเดียว** แล้วบันทึกว่าข้อมูลพฤติกรรมไม่มีทั้งหมด
 
     Args:
-        topic: 'helmet', 'seatbelt', 'age', 'sex', 'role'
+        topic: 'helmet', 'seatbelt', 'age', 'sex', 'role', หรือ 'all' (แนะนำใช้ 'all')
     """
-    topic_map = {
-        "helmet": "การสวมหมวกกันน็อก",
-        "seatbelt": "การคาดเข็มขัดนิรภัย",
-        "age": "การกระจายตามกลุ่มอายุ",
-        "sex": "การกระจายตามเพศ",
-        "role": "บทบาทผู้ประสบเหตุ",
-    }
-    return _person_data_unavailable(topic_map.get(topic.lower(), topic))
+    return (
+        "[ข้อมูลพฤติกรรมเสี่ยง — ทุก topic]\n"
+        f"{_PERSON_EMPTY_NOTE}\n"
+        "⚠️ ครอบคลุม: หมวกกันน็อก, เข็มขัดนิรภัย, กลุ่มอายุ, เพศ, บทบาทผู้ประสบเหตุ\n"
+        "ไม่จำเป็นต้องเรียก tool นี้ซ้ำด้วย topic อื่น — ข้อมูลว่างทั้งหมดเหมือนกัน"
+    )
 
 
 # ── Group 3: Temporal & Seasonal ─────────────────────────────────────────────
@@ -422,11 +638,20 @@ def query_seasonal_comparison(province: str = "", month1: int = 4, month2: int =
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_seasonal_comparison(province, month1, month2, year_start, year_end)
+    return _cap_output(_query_seasonal_comparison(province, month1, month2, year_start, year_end))
 
 
-def _query_weekend_vs_weekday(province: str, year_start: int = 2021, year_end: int = 2026) -> str:
+def _query_weekend_vs_weekday(province: str, district: str = "",
+                              year_start: int = 2021, year_end: int = 2026) -> str:
+    prov_label = province.strip() or "เขตสุขภาพที่ 10"
+    dist_label = f" > {district.strip()}" if district.strip() else ""
+    year_label = f"พ.ศ. {_ce_to_be(year_start)}-{_ce_to_be(year_end)}"
+
     clause, params = _province_ilike_clause("g", province)
+    if district.strip():
+        clause += " AND g.district_name ILIKE %s"
+        params  = params + [f"%{district.strip()}%"]
+
     sql = f"""
         SELECT CASE WHEN EXTRACT(DOW FROM e.event_datetime)::int IN (0,6)
                     THEN 'วันหยุด' ELSE 'วันธรรมดา' END AS day_type,
@@ -434,7 +659,8 @@ def _query_weekend_vs_weekday(province: str, year_start: int = 2021, year_end: i
                COUNT(*) AS accident_count, SUM(e.death_count) AS death_count
         FROM fact_accident_event e
         JOIN dim_geography g ON e.geography_id = g.geography_id
-        WHERE {clause} AND e.event_datetime IS NOT NULL
+        WHERE {clause}
+          AND e.event_datetime IS NOT NULL
           AND (e.csv_year BETWEEN %s AND %s OR e.csv_year IS NULL)
         GROUP BY day_type, hour_of_day
         ORDER BY day_type, accident_count DESC
@@ -443,17 +669,60 @@ def _query_weekend_vs_weekday(province: str, year_start: int = 2021, year_end: i
         rows = query_db(sql, tuple(params + [year_start, year_end]))
     except Exception as exc:
         return f"ไม่สามารถดึงข้อมูลวันหยุด/วันธรรมดาได้: {exc}"
-    if not rows:
-        return f"ไม่พบข้อมูลสำหรับ '{province}'"
 
-    prov_label = province.strip() or "เขตสุขภาพที่ 10"
-    year_label = f"พ.ศ. {_ce_to_be(year_start)}-{_ce_to_be(year_end)}"
+    # ── Fallback: ไม่มี event_datetime → แสดงสถิติรายเดือนจาก mart_accident_summary ─
+    if not rows:
+        clause_m, params_m = _province_ilike_clause("ms", province)
+        if district.strip():
+            clause_m += " AND g.district_name ILIKE %s"
+            params_m  = params_m + [f"%{district.strip()}%"]
+        sql_fb = f"""
+            SELECT ms.year_no, ms.month_no,
+                   SUM(ms.death_count)    AS total_deaths,
+                   SUM(ms.accident_count) AS all_accidents
+            FROM mart_accident_summary ms
+            JOIN dim_geography g ON ms.geography_id = g.geography_id
+            WHERE {clause_m}
+              AND ms.year_no BETWEEN %s AND %s
+            GROUP BY ms.year_no, ms.month_no
+            ORDER BY ms.year_no, ms.month_no
+        """
+        try:
+            fb = query_db(sql_fb, tuple(params_m + [year_start, year_end]))
+        except Exception:
+            fb = []
+
+        if fb:
+            month_names = {
+                1:"ม.ค.",2:"ก.พ.",3:"มี.ค.",4:"เม.ย.",5:"พ.ค.",6:"มิ.ย.",
+                7:"ก.ค.",8:"ส.ค.",9:"ก.ย.",10:"ต.ค.",11:"พ.ย.",12:"ธ.ค.",
+            }
+            lines = [
+                f"[Weekend vs Weekday — ไม่มีข้อมูลรายวัน] {prov_label}{dist_label} ({year_label})",
+                f"  ⚠️ ข้อมูลไม่มี event_datetime — ไม่สามารถแยกวันหยุด/วันธรรมดาได้",
+                f"  แสดงสถิติรายเดือนจาก mart_accident_summary แทน:",
+                f"  {'ปี':>5} {'เดือน':<7} {'อุบัติเหตุ':>10} {'เสียชีวิต':>10}",
+                "  " + "-" * 38,
+            ]
+            for r in fb:
+                lines.append(
+                    f"  {r['year_no']:>5} {month_names.get(r['month_no'], str(r['month_no'])):<7} "
+                    f"{r['all_accidents'] or 0:>10,} {r['total_deaths'] or 0:>10,}"
+                )
+            return "\n".join(lines)
+
+        return (
+            f"[Weekend vs Weekday] {prov_label}{dist_label} ({year_label})\n"
+            f"  ⚠️ ไม่พบข้อมูลวันหยุด/วันธรรมดา — ข้อมูลในพื้นที่นี้ไม่มีเวลาเกิดเหตุ\n"
+            f"  คอลัมน์ที่ใช้แยกวัน: fact_accident_event.event_datetime (ต้องไม่เป็น NULL)"
+        )
+
     from collections import defaultdict
     by_type: dict = defaultdict(list)
     for r in rows:
         by_type[r["day_type"]].append(r)
 
-    lines = [f"[Weekend vs Weekday] รูปแบบชั่วโมงเสี่ยง — {prov_label} ({year_label})"]
+    lines = [f"[Weekend vs Weekday] รูปแบบชั่วโมงเสี่ยง — {prov_label}{dist_label} ({year_label})"]
     for day_type, day_rows in sorted(by_type.items()):
         top3 = sorted(day_rows, key=lambda x: x["accident_count"] or 0, reverse=True)[:3]
         lines.append(f"\n  {day_type}:")
@@ -465,15 +734,19 @@ def _query_weekend_vs_weekday(province: str, year_start: int = 2021, year_end: i
 
 
 @tool("query_weekend_vs_weekday")
-def query_weekend_vs_weekday(province: str = "", year_start: int = 2021, year_end: int = 2026) -> str:
-    """Group 3 Q12: เปรียบเทียบช่วงเวลาเสี่ยงวันหยุด vs วันธรรมดา.
+def query_weekend_vs_weekday(province: str = "", district: str = "",
+                             year_start: int = 2021, year_end: int = 2026) -> str:
+    """Group 3 Q12: เปรียบเทียบช่วงเวลาเสี่ยงวันหยุด vs วันธรรมดา — รองรับระดับอำเภอ.
+
+    ถ้าไม่มี event_datetime จะ fallback เป็นสถิติรายเดือนจาก mart_accident_summary
 
     Args:
         province: ชื่อจังหวัด หรือ ''
+        district: ชื่ออำเภอ (ภาษาไทย) หรือ '' สำหรับทุกอำเภอ
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_weekend_vs_weekday(province, year_start, year_end)
+    return _cap_output(_query_weekend_vs_weekday(province, district, year_start, year_end))
 
 
 def _query_monthly_vehicle_pattern(province: str, year_start: int = 2021, year_end: int = 2026) -> str:
@@ -531,7 +804,7 @@ def query_monthly_vehicle_pattern(province: str = "", year_start: int = 2021, ye
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_monthly_vehicle_pattern(province, year_start, year_end)
+    return _cap_output(_query_monthly_vehicle_pattern(province, year_start, year_end))
 
 
 def _query_late_night_vehicles(province: str, year_start: int = 2021, year_end: int = 2026) -> str:
@@ -579,7 +852,7 @@ def query_late_night_vehicles(province: str = "", year_start: int = 2021, year_e
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_late_night_vehicles(province, year_start, year_end)
+    return _cap_output(_query_late_night_vehicles(province, year_start, year_end))
 
 
 # ── Group 4: KPI Monitoring ───────────────────────────────────────────────────
@@ -638,7 +911,7 @@ def query_kpi_trend(province: str = "", year_start: int = 2021, year_end: int = 
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_kpi_trend(province, year_start, year_end)
+    return _cap_output(_query_kpi_trend(province, year_start, year_end))
 
 
 def _query_serious_injury_ratio(province: str = "", year: int = 2024) -> str:
@@ -686,7 +959,7 @@ def query_serious_injury_ratio(province: str = "", year: int = 2024) -> str:
         province: ชื่อจังหวัด หรือ ''
         year: ปี ค.ศ. (CE)
     """
-    return _query_serious_injury_ratio(province, year)
+    return _cap_output(_query_serious_injury_ratio(province, year))
 
 
 def _query_top_cause_shift(province: str, year1: int = 2023, year2: int = 2024) -> str:
@@ -793,7 +1066,7 @@ def query_district_death_vs_accident(province: str = "", year_start: int = 2021,
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_district_death_vs_accident(province, year_start, year_end)
+    return _cap_output(_query_district_death_vs_accident(province, year_start, year_end))
 
 
 def _query_district_summary(province: str, district: str = "",
@@ -858,7 +1131,7 @@ def query_district_summary(province: str = "", district: str = "",
         year_start: ปีเริ่มต้น ค.ศ.
         year_end: ปีสิ้นสุด ค.ศ.
     """
-    return _query_district_summary(province, district, year_start, year_end)
+    return _cap_output(_query_district_summary(province, district, year_start, year_end))
 
 
 def _query_province_executive_summary(province: str, year: int = 2024) -> str:
@@ -968,7 +1241,8 @@ def get_accident_schema(table_name: str = "") -> str:
     if not table_name:
         return json.dumps({
             "tables": [
-                {"name": "fact_accident_event", "note": "Main fact table — event_datetime, geography_id, vehicle_type, death_count, serious_injured, weather_condition, accident_type, severity_level, accident_location"},
+                {"name": "fact_accident_event", "note": "Main fact table — accident_id, event_datetime(TIMESTAMP,อาจ NULL), geography_id, road_segment_id, weather_condition, accident_type, accident_location, cause_presumed, severity_level, vehicle_type, injured_count, serious_injured, death_count, csv_year(INT). ⚠️ ไม่มีคอลัมน์ time_id"},
+                {"name": "dim_geography", "note": "geography_id, country_code, province_code, province_name, district_code, district_name, subdistrict_code, subdistrict_name, latitude, longitude. ⚠️ ใช้ district_name ไม่ใช่ district"},
                 {"name": "fact_accident_person", "note": "EMPTY — no data"},
                 {"name": "dim_geography", "note": "province_name, district_name, latitude, longitude"},
                 {"name": "dim_road_segment", "note": "road_name, road_code, km_marker"},

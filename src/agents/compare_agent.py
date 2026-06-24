@@ -64,6 +64,7 @@ def run_compare_pipeline(
     queue: asyncio.Queue,
     loop: asyncio.AbstractEventLoop,
     session_id: str = "",
+    history_context: str = "",
 ) -> None:
     """Run a comparison pipeline between two CSV datasets.
 
@@ -354,9 +355,11 @@ def run_compare_pipeline(
         verbose=False,
         max_iter=5,
     )
+    history_section = f"{history_context}\n\n" if history_context else ""
     insight = _run_agent(
         analyst,
         (
+            f"{history_section}"
             f"คำถาม: {prompt}\n\n"
             f"ไฟล์ที่เปรียบเทียบ:\n"
             f"  A: {file_result_a}\n"
