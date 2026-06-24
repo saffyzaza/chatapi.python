@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pdfplumber
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -97,7 +98,11 @@ def _get_gemini_client():
 
 
 def _gemini_model() -> str:
-    return get_settings().GEMINI_MODEL_PRO  # gemini-2.5-pro
+    return get_settings().GEMINI_MODEL_PRO  # gemini-2.5-pro (markdown conversion)
+
+
+def _gemini_model_fast() -> str:
+    return get_settings().GEMINI_MODEL      # gemini-2.0-flash (filename / location)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -153,7 +158,7 @@ def _build_zone10_list_text() -> str:
 
 def _ai_detect_location(client, uploaded_file, sample_text: str, original_pdf_name: str) -> dict:
     """
-    ให้ Gemini 3 Pro วิเคราะห์เนื้อหา PDF แล้วระบุจังหวัดและอำเภอในเขต 10.
+    ให้ Gemini Pro วิเคราะห์เนื้อหา PDF แล้วระบุจังหวัดและอำเภอในเขต 10.
 
     Returns:
         {
@@ -165,75 +170,124 @@ def _ai_detect_location(client, uploaded_file, sample_text: str, original_pdf_na
     """
     zone_info = _build_zone10_list_text()
 
-    prompt = f"""คุณเป็น AI ผู้เชี่ยวชาญด้านสาธารณสุขเขต 10 ของประเทศไทย
+    prompt = f"""คุณเป็น AI ผู้เชี่ยวชาญด้านสาธารณสุขเขต 10 ของประเทศไทย มีหน้าที่ระบุว่าเอกสาร PDF นี้เป็นของ "จังหวัดใด" ในเขต 10
 
 {zone_info}
 
-วิเคราะห์เนื้อหาของไฟล์ PDF ที่แนบมานี้ **อย่างละเอียดทุกหน้า** เพื่อค้นหาว่าเอกสารนี้เป็นข้อมูล/รายงานที่เกี่ยวข้องกับ "จังหวัดใดในเขต 10" มากที่สุด
-หน้าที่ของคุณคือค้นหาเบาะแส (เช่น ชื่อหน่วยงาน, ชื่อโรงพยาบาล, ชื่ออำเภอ, หรือการกล่าวถึงจังหวัด) ที่ซ่อนอยู่ในเอกสาร
+═══════════════════════════════════════
+กฎการวิเคราะห์ (ห้ามละเลยข้อใดข้อหนึ่ง)
+═══════════════════════════════════════
+1. อ่านเนื้อหา PDF ที่แนบมาทุกหน้าก่อนตอบ
+2. ค้นหาเบาะแสต่อไปนี้ แล้วให้ confidence ตามนี้:
 
-**กฎการวิเคราะห์:**
-1. ห้ามเดามั่ว คุณต้องหาหลักฐานในเอกสาร
-2. หากเจอชื่ออำเภอ ให้จับคู่กับจังหวัดที่ถูกต้อง
-3. หากเอกสารเป็นเรื่องทั่วไประดับเขต หรือไม่มีความเชื่อมโยงเฉพาะเจาะจงกับจังหวัดใดเลย ให้ระบุว่า "ส่วนกลาง"
+   ★ confidence="high" — เมื่อพบสิ่งเหล่านี้อย่างน้อย 1 อย่าง:
+     • ชื่อจังหวัดปรากฏในเอกสาร (แม้แค่ครั้งเดียว)
+     • ชื่ออำเภอใดๆ ของจังหวัดนั้นปรากฏในเอกสาร
+     • ชื่อโรงพยาบาล / สสจ. / หน่วยงานสาธารณสุขของจังหวัดนั้น
+     • ที่อยู่หรือสถานที่ที่ระบุจังหวัดนั้น
 
-**ตอบในรูปแบบ JSON เท่านั้น (ห้ามมีข้อความอื่นหรือ Markdown block ที่ซ้อนกัน):**
-```json
-{{
-  "province": "ชื่อจังหวัด หรือ 'ส่วนกลาง'",
-  "district": "ชื่ออำเภอ หรือ null",
-  "confidence": "high หรือ medium หรือ low",
-  "reason": "อธิบายหลักฐานที่พบในเอกสารที่ทำให้คุณเลือกจังหวัดนี้ เช่น พบคำว่า 'โรงพยาบาลอำนาจเจริญ' ในหน้า 2"
-}}
-```"""
+   ★ confidence="medium" — เมื่อมีหลักฐานทางอ้อม:
+     • ข้อมูลสถิติของพื้นที่ที่น่าจะเป็นจังหวัดนั้น แต่ไม่ได้ระบุชื่อตรงๆ
+     • บริบทของเอกสารที่ชี้ไปยังจังหวัดนั้นโดยรวม
+
+   ★ confidence="low" — เฉพาะเมื่อไม่พบหลักฐานใดๆ เลย
+
+3. ห้ามเดาโดยไม่มีหลักฐาน
+4. หากเอกสารเปรียบเทียบทุกจังหวัดหรือเป็นระดับประเทศ → ระบุ "ส่วนกลาง"
+5. หากไม่พบหลักฐานของจังหวัดใดเลย → ระบุ "ส่วนกลาง" ห้ามเดาเป็นอุบลราชธานี
+
+═══════════════════════════════════════
+ตัวอย่างการวิเคราะห์ที่ถูกต้อง
+═══════════════════════════════════════
+✅ พบคำว่า "ศรีสะเกษ" หรือ "ขุขันธ์" → province: "ศรีสะเกษ", confidence: "high"
+✅ พบ "โรงพยาบาลเลิงนกทา" → province: "ยโสธร", district: "เลิงนกทา", confidence: "high"
+✅ พบ "สสจ.มุกดาหาร" → province: "มุกดาหาร", confidence: "high"
+✅ พบ "อุบลราชธานี" แค่ 1 ครั้ง → confidence: "high" (พบหลักฐาน)
+✅ ข้อมูลเขต 10 ทุกจังหวัด → province: "ส่วนกลาง", confidence: "high"
+❌ ห้าม: ระบุ "อุบลราชธานี" โดยไม่มีหลักฐานใดๆ
+
+ตอบในรูปแบบ JSON เท่านั้น:
+{{"province":"ชื่อจังหวัด หรือ ส่วนกลาง","district":"ชื่ออำเภอ หรือ null","confidence":"high หรือ medium หรือ low","reason":"อธิบายหลักฐานที่พบ"}}"""
 
     try:
         response = client.models.generate_content(
-            model=_gemini_model(),
+            model=_gemini_model(),  # Pro: ความแม่นยำสูงสุดสำหรับ location
             contents=[uploaded_file, prompt],
             config=types.GenerateContentConfig(
-                max_output_tokens=300,
-                temperature=0.1,
+                max_output_tokens=400,
+                temperature=0.02,  # ลด temperature ให้ deterministic มากขึ้น
             ),
         )
         raw = response.text.strip()
         logger.info(f"AI location raw response: {raw}")
-        # Extract JSON from response
-        json_match = re.search(r'\{[^{}]+\}', raw, re.DOTALL)
+        # Extract JSON — รองรับ nested objects และ markdown code blocks
+        json_match = re.search(r'\{.*?\}', raw.replace('\n', ' '), re.DOTALL)
         if json_match:
             data = json.loads(json_match.group())
-            province = data.get("province")
-            district = data.get("district")
+            province = data.get("province", "").strip()
+            district = (data.get("district") or "").strip() or None
+
+            # Normalize confidence value
+            conf_raw = str(data.get("confidence", "low")).strip().lower()
+            if conf_raw in ("high", "สูง", "high confidence"):
+                confidence = "high"
+            elif conf_raw in ("medium", "กลาง", "ปานกลาง", "medium confidence"):
+                confidence = "medium"
+            else:
+                confidence = "low"
+
+            # "ส่วนกลาง" เป็น valid province
+            if province == "ส่วนกลาง":
+                return {
+                    "province": "ส่วนกลาง",
+                    "district": None,
+                    "confidence": confidence,
+                    "reason": data.get("reason", ""),
+                }
 
             # Validate province is in Zone 10
             if province and province not in ZONE10_PROVINCES:
-                # Try alias
                 province = _PROVINCE_ALIASES.get(province, None)
 
             # Validate district belongs to province
             if province and district and district not in ZONE10_PROVINCES.get(province, []):
                 district = None  # district not valid for this province
 
-            return {
-                "province": province,
-                "district": district,
-                "confidence": data.get("confidence", "low"),
-                "reason": data.get("reason", ""),
-            }
+            if province:
+                return {
+                    "province": province,
+                    "district": district,
+                    "confidence": confidence,
+                    "reason": data.get("reason", ""),
+                }
     except Exception as e:
         logger.warning(f"AI location detection failed: {e}")
 
     # Fallback: keyword search in text only (ignoring filename to prevent misclassification)
-    combined = sample_text[:1500].lower()
+    combined = sample_text[:3000].lower()
+    best_province = None
+    best_district = None
+    best_count = 0
+
     for province, districts in ZONE10_PROVINCES.items():
-        if province.lower() in combined or province[:4].lower() in combined:
-            # Try to find district
+        if province == "ส่วนกลาง":
+            continue
+        count = combined.count(province.lower()) + combined.count(province[:4].lower())
+        if count > best_count:
+            best_count = count
+            best_province = province
+            best_district = None
             for district in districts:
                 if district.lower() in combined:
-                    return {"province": province, "district": district, "confidence": "low", "reason": "keyword match"}
-            return {"province": province, "district": None, "confidence": "low", "reason": "keyword match (province only)"}
+                    best_district = district
+                    break
 
-    return {"province": "ส่วนกลาง", "district": None, "confidence": "low", "reason": "ไม่พบความเชื่อมโยงกับจังหวัดใดในเขต 10 จึงจัดให้อยู่ส่วนกลาง"}
+    if best_province and best_count >= 1:  # แค่พบ 1 ครั้งก็ถือว่า medium
+        conf = "high" if best_count >= 3 else "medium"
+        return {"province": best_province, "district": best_district, "confidence": conf, "reason": f"keyword match (พบ {best_count} ครั้ง)"}
+
+    return {"province": "ส่วนกลาง", "district": None, "confidence": "medium", "reason": "ไม่พบความเชื่อมโยงกับจังหวัดใดในเขต 10"}
+
 
 
 def _resolve_save_path(
@@ -336,7 +390,7 @@ def _ai_generate_filename(client, uploaded_file, original_pdf_name: str) -> str:
 
     try:
         response = client.models.generate_content(
-            model=_gemini_model(),
+            model=_gemini_model_fast(),  # Flash: เร็วกว่า Pro ~3x สำหรับ task นี้
             contents=[uploaded_file, prompt],
             config=types.GenerateContentConfig(
                 max_output_tokens=100,
@@ -469,7 +523,14 @@ created: {datetime.now().strftime('%Y-%m-%d')}
 
 # ── Core ingest function ──────────────────────────────────────────────────────
 
-def _do_ingest(job_id: str, file_id: str, original_name: str) -> None:
+def _do_ingest(
+    job_id: str,
+    file_id: str,
+    original_name: str,
+    override_province: str | None = None,
+    override_district: str | None = None,
+    override_folder_name: str | None = None,
+) -> None:
     """รัน ingest ใน background thread."""
     job = _jobs[job_id]
     job["status"] = "running"
@@ -517,21 +578,54 @@ def _do_ingest(job_id: str, file_id: str, original_name: str) -> None:
             tmp_path = tmp.name
 
         uploaded_file = None
-        uploaded_file = gemini_client.files.upload(file=tmp_path, config={'mime_type': 'application/pdf'})
+        max_attempts = 4
+        for attempt in range(1, max_attempts + 1):
+            try:
+                uploaded_file = gemini_client.files.upload(file=tmp_path, config={'mime_type': 'application/pdf'})
+                break
+            except Exception as upload_err:
+                if attempt == max_attempts:
+                    raise upload_err
+                wait_time = attempt * 2
+                log(f"⚠️ อัปโหลดล้มเหลวชั่วคราว ({upload_err}) กำลังลองใหม่ใน {wait_time} วินาที... (ครั้งที่ {attempt}/{max_attempts})")
+                time.sleep(wait_time)
         log("✅ อัปโหลดไฟล์ให้ AI สำเร็จ (หลีกเลี่ยงปัญหาฟอนต์ภาษาไทยของ PDF)")
 
         sample_text = "\n\n".join(pages[:min(5, total_pages)])
 
-        log("🤖 AI กำลังวิเคราะห์ชื่อเอกสารจากเนื้อหาจริง...")
-        base_filename = _ai_generate_filename(gemini_client, uploaded_file, original_name)
-        log(f"📝 ชื่อเอกสาร: {base_filename}")
+        run_ai_name = not override_folder_name
+        run_ai_loc = not override_province or override_province == "auto"
 
-        log("🗺️ AI กำลังอ่านไฟล์เพื่อหาข้อมูลจังหวัด/อำเภอ...")
-        location = _ai_detect_location(gemini_client, uploaded_file, sample_text, original_name)
-        province = location["province"]
-        district = location["district"]
-        confidence = location["confidence"]
-        reason = location["reason"]
+        base_filename = override_folder_name or ""
+        province = override_province if (override_province and override_province != "auto") else None
+        district = override_district if (override_district and override_district != "auto") else None
+        confidence = "manual"
+        reason = "กำหนดโดยผู้ใช้"
+
+        if run_ai_name or run_ai_loc:
+            log("🤖 AI กำลังวิเคราะห์ข้อมูลเพิ่มเติม...")
+            with ThreadPoolExecutor(max_workers=2) as meta_pool:
+                fut_name = None
+                fut_loc = None
+                if run_ai_name:
+                    fut_name = meta_pool.submit(_ai_generate_filename, gemini_client, uploaded_file, original_name)
+                if run_ai_loc:
+                    fut_loc  = meta_pool.submit(_ai_detect_location,  gemini_client, uploaded_file, sample_text, original_name)
+                
+                if fut_name:
+                    base_filename = fut_name.result()
+                if fut_loc:
+                    location = fut_loc.result()
+                    province = location["province"]
+                    district = location["district"]
+                    confidence = location["confidence"]
+                    reason = location["reason"]
+
+        log(f"📝 ชื่อเอกสาร: {base_filename}")
+        if province == "ส่วนกลาง":
+            district = None
+        if district == "none" or district == "ไม่มี" or not district:
+            district = None
 
         if not province or province not in ZONE10_PROVINCES:
             province = "ส่วนกลาง"
@@ -556,19 +650,18 @@ def _do_ingest(job_id: str, file_id: str, original_name: str) -> None:
             else:
                 chunk_filenames.append(f"{base_filename}-ส่วนที่{i+1:02d}")
 
-        # 7. Convert each chunk to MD
+        # 7. Convert each chunk to MD (parallel)
         created_files: list[str] = []
+        md_results: dict[int, str] = {}
 
-        for i, chunk in enumerate(chunks):
+        # ── สร้าง args สำหรับแต่ละ chunk ────────────────────────────────────
+        def _convert_chunk(i: int) -> tuple[int, str]:
             chunk_num = i + 1
             page_start = i * chunk_size + 1
             page_end = min(page_start + chunk_size - 1, total_pages)
-            log(f"🔄 แปลงส่วนที่ {chunk_num}/{total_chunks} (หน้า {page_start}–{page_end})...")
-
             prev_link = chunk_filenames[i - 1] if i > 0 else None
             next_link = chunk_filenames[i + 1] if i < total_chunks - 1 else None
-
-            md_content = _ai_convert_to_markdown(
+            content = _ai_convert_to_markdown(
                 client=gemini_client,
                 uploaded_file=uploaded_file,
                 chunk_index=chunk_num,
@@ -582,11 +675,26 @@ def _do_ingest(job_id: str, file_id: str, original_name: str) -> None:
                 district=district,
                 location_confidence=confidence,
             )
+            return i, content
 
-            # Save to correct folder
+        max_parallel = min(s.PDF_INGEST_MAX_PARALLEL, total_chunks)
+        log(f"⚡ แปลง {total_chunks} ส่วนพร้อมกัน (สูงสุด {max_parallel} threads)...")
+
+        with ThreadPoolExecutor(max_workers=max_parallel) as chunk_pool:
+            futures = {chunk_pool.submit(_convert_chunk, i): i for i in range(total_chunks)}
+            for fut in as_completed(futures):
+                idx, content = fut.result()
+                chunk_num = idx + 1
+                page_start = idx * chunk_size + 1
+                page_end = min(page_start + chunk_size - 1, total_pages)
+                log(f"✅ แปลงส่วนที่ {chunk_num}/{total_chunks} สำเร็จ (หน้า {page_start}–{page_end})")
+                md_results[idx] = content
+
+        # ── บันทึกตามลำดับ ────────────────────────────────────────────────────
+        for i in range(total_chunks):
             md_filename = chunk_filenames[i] + ".md"
             md_path = save_dir / md_filename
-            md_path.write_text(md_content, encoding="utf-8")
+            md_path.write_text(md_results[i], encoding="utf-8")
             created_files.append(f"{rel_path}/{md_filename}")
             log(f"💾 บันทึก: {rel_path}/{md_filename}")
 
@@ -633,28 +741,40 @@ def _do_ingest(job_id: str, file_id: str, original_name: str) -> None:
             _update_province_index(vault_path, province, district, base_filename, index_filename, total_pages)
             log(f"🔗 อัปเดต Index จังหวัด {province} แล้ว")
 
-        # 10. Register in obsidian_pdf_assets
+        # 9.5 Update metadata in MinIO to persist ingest status
         try:
-            from src.db.pool import execute_db
-            s_cfg = get_settings()
-            scheme = "https" if s_cfg.MINIO_USE_SSL else "http"
-            minio_url = f"{scheme}://{s_cfg.minio_endpoint_url}/{_pdf_bucket()}/{file_id}"
-            execute_db(
-                """
-                INSERT INTO obsidian_pdf_assets
-                    (province, filename, minio_path, minio_url, file_size, content_type)
-                VALUES (%s, %s, %s, %s, %s, 'application/pdf')
-                ON CONFLICT (minio_path) DO UPDATE SET
-                    province = EXCLUDED.province,
-                    filename = EXCLUDED.filename,
-                    minio_url = EXCLUDED.minio_url,
-                    file_size = EXCLUDED.file_size
-                """,
-                (province or "ส่วนกลาง", original_name, file_id, minio_url, len(file_bytes)),
+            from minio.commonconfig import CopySource
+            import urllib.parse
+            bucket = _pdf_bucket()
+            stat = client_minio.stat_object(bucket, file_id)
+            meta = {k.lower(): v for k, v in (stat.metadata or {}).items()}
+            
+            custom_meta = {}
+            for k, v in meta.items():
+                if k.startswith('x-amz-meta-'):
+                    key = k[len('x-amz-meta-'):]
+                    custom_meta[key] = v
+            
+            custom_meta['ingested'] = 'true'
+            custom_meta['province'] = urllib.parse.quote(province or "")
+            custom_meta['district'] = urllib.parse.quote(district or "")
+            custom_meta['savedat'] = urllib.parse.quote(rel_path or "")
+            custom_meta['confidence'] = confidence or "low"
+            # Ensure Content-Type is preserved if present
+            content_type = stat.metadata.get('Content-Type') or stat.metadata.get('content-type') or 'application/pdf'
+            custom_meta['Content-Type'] = content_type
+            
+            client_minio.copy_object(
+                bucket,
+                file_id,
+                CopySource(bucket, file_id),
+                metadata=custom_meta,
+                metadata_directive='REPLACE'
             )
-            log("📋 บันทึกใน PDF Assets ของ Obsidian แล้ว")
-        except Exception as e:
-            logger.warning(f"Failed to register in obsidian_pdf_assets: {e}")
+            log(f"💾 อัปเดตสถานะ Ingested ลงใน MinIO Metadata เรียบร้อยแล้ว")
+        except Exception as meta_err:
+            logger.warning(f"Failed to update MinIO metadata: {meta_err}", exc_info=True)
+            log(f"⚠️ ไม่สามารถอัปเดตสถานะลงใน MinIO Metadata ได้: {meta_err}")
 
         job["status"] = "completed"
         job["result"] = {
@@ -705,6 +825,32 @@ async def upload_pdf(file: UploadFile = File(...)):
     client_minio = _get_client()
     bucket = _pdf_bucket()
 
+    original_name = file.filename or "document.pdf"
+
+    # Check duplicate name in MinIO
+    try:
+        objects = list(client_minio.list_objects(bucket, recursive=True))
+        for obj in objects:
+            if obj.object_name.endswith("__apa.json") or obj.object_name.endswith("__path.json"):
+                continue
+            try:
+                stat = client_minio.stat_object(bucket, obj.object_name)
+                meta = {k.lower(): v for k, v in (stat.metadata or {}).items()}
+                orig_name = _urllib_parse.unquote(meta.get("x-amz-meta-name", ""))
+                if orig_name == original_name:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"ไฟล์ '{original_name}' เคยอัปโหลดในระบบแล้ว"
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Error checking duplicate file in MinIO: {e}")
+
     # Generate unique file ID
     import random
     for _ in range(100):
@@ -745,6 +891,9 @@ async def ingest_pdf(
     file_id: str,
     background_tasks: BackgroundTasks,
     original_name: str = "document.pdf",
+    province: str = None,
+    district: str = None,
+    folder_name: str = None,
 ):
     """เริ่ม ingest PDF จาก MinIO → Markdown → Obsidian vault (จัดเก็บตามจังหวัด/อำเภอ เขต 10)."""
     job_id = str(uuid.uuid4())
@@ -756,7 +905,7 @@ async def ingest_pdf(
         "progress": [],
         "created_at": time.time(),
     }
-    background_tasks.add_task(_do_ingest, job_id, file_id, original_name)
+    background_tasks.add_task(_do_ingest, job_id, file_id, original_name, province, district, folder_name)
     return {"job_id": job_id, "status": "queued"}
 
 
@@ -841,7 +990,6 @@ async def list_pdf_files():
     """List PDF files ทั้งหมดใน MinIO bucket."""
     import urllib.parse
 
-    _ensure_pdf_bucket()
     client_minio = _get_client()
     bucket = _pdf_bucket()
 
@@ -859,24 +1007,51 @@ async def list_pdf_files():
                 orig_name = urllib.parse.unquote(meta.get("x-amz-meta-name", name))
 
                 if ext == "pdf" or orig_name.lower().endswith(".pdf"):
-                    ingested = any(
-                        j.get("file_id") == name and j.get("status") == "completed"
-                        for j in _jobs.values()
-                    )
-                    job_result = next(
-                        (j.get("result") for j in _jobs.values()
-                         if j.get("file_id") == name and j.get("status") == "completed"),
+                    # Check in-memory jobs (first priority for running/queued, fallback for completed)
+                    in_memory_job = next(
+                        (j for j in _jobs.values() if j.get("file_id") == name),
                         None
                     )
+                    
+                    # Read metadata persisted in MinIO
+                    meta_ingested = meta.get("x-amz-meta-ingested") == "true"
+                    meta_province = urllib.parse.unquote(meta.get("x-amz-meta-province", "")) or None
+                    meta_district = urllib.parse.unquote(meta.get("x-amz-meta-district", "")) or None
+                    meta_savedat = urllib.parse.unquote(meta.get("x-amz-meta-savedat", "")) or None
+                    meta_confidence = meta.get("x-amz-meta-confidence", "") or None
+                    
+                    if in_memory_job:
+                        job_status = in_memory_job.get("status")
+                        job_result = in_memory_job.get("result") or {}
+                        
+                        ingested = (job_status == "completed") or meta_ingested
+                        province = job_result.get("province") or meta_province
+                        district = job_result.get("district") or meta_district
+                        saved_at = job_result.get("saved_at") or meta_savedat
+                        location_confidence = job_result.get("location_confidence") or meta_confidence
+                        ingest_status = job_status
+                        ingest_job_id = in_memory_job.get("job_id")
+                    else:
+                        ingested = meta_ingested
+                        province = meta_province
+                        district = meta_district
+                        saved_at = meta_savedat
+                        location_confidence = meta_confidence
+                        ingest_status = "completed" if meta_ingested else None
+                        ingest_job_id = None
+
                     files.append({
                         "id": name,
                         "name": orig_name,
                         "size": obj.size,
                         "uploaded_at": meta.get("x-amz-meta-uploadedat", ""),
                         "ingested": ingested,
-                        "province": job_result.get("province") if job_result else None,
-                        "district": job_result.get("district") if job_result else None,
-                        "saved_at": job_result.get("saved_at") if job_result else None,
+                        "ingestJobId": ingest_job_id,
+                        "ingestStatus": ingest_status,
+                        "province": province,
+                        "district": district,
+                        "saved_at": saved_at,
+                        "location_confidence": location_confidence,
                     })
             except Exception:
                 pass
@@ -996,3 +1171,101 @@ async def get_zone10_structure():
         "total_provinces": len(ZONE10_PROVINCES),
         "total_districts": sum(len(d) for d in ZONE10_PROVINCES.values()),
     }
+
+
+# ── Vault CRUD endpoints ──────────────────────────────────────────────────────
+
+from fastapi import Body
+
+def _safe_vault_path(vault_path: Path, rel: str) -> Path:
+    """ป้องกัน path traversal — ตรวจสอบว่า path อยู่ใน vault เสมอ."""
+    resolved = (vault_path / rel).resolve()
+    if not str(resolved).startswith(str(vault_path.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return resolved
+
+
+@router.get("/vault/file")
+async def read_vault_file(path: str):
+    """อ่านเนื้อหาของไฟล์ Markdown ใน vault."""
+    vault_path = _get_vault_path()
+    target = _safe_vault_path(vault_path, path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    content = target.read_text(encoding="utf-8")
+    stat = target.stat()
+    return {
+        "path": path,
+        "name": target.name,
+        "content": content,
+        "size": stat.st_size,
+        "modified_at": stat.st_mtime,
+    }
+
+
+@router.put("/vault/file")
+async def write_vault_file(
+    path: str,
+    body: dict = Body(...),
+):
+    """สร้างหรืออัปเดตเนื้อหาไฟล์ Markdown ใน vault."""
+    content = body.get("content", "")
+    vault_path = _get_vault_path()
+    target = _safe_vault_path(vault_path, path)
+    # สร้างโฟลเดอร์ parent ถ้ายังไม่มี
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    stat = target.stat()
+    return {"path": path, "size": stat.st_size, "modified_at": stat.st_mtime}
+
+
+@router.delete("/vault/file")
+async def delete_vault_file(path: str):
+    """ลบไฟล์หรือโฟลเดอร์ออกจาก vault."""
+    import shutil
+    vault_path = _get_vault_path()
+    target = _safe_vault_path(vault_path, path)
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Not found")
+    if target.is_dir():
+        shutil.rmtree(target)
+    else:
+        target.unlink()
+    return {"deleted": True, "path": path}
+
+
+@router.post("/vault/rename")
+async def rename_vault_file(body: dict = Body(...)):
+    """เปลี่ยนชื่อ หรือย้ายไฟล์/โฟลเดอร์ภายใน vault."""
+    old_path = body.get("old_path", "")
+    new_path = body.get("new_path", "")
+    if not old_path or not new_path:
+        raise HTTPException(status_code=400, detail="old_path and new_path required")
+    vault_path = _get_vault_path()
+    src = _safe_vault_path(vault_path, old_path)
+    dst = _safe_vault_path(vault_path, new_path)
+    if not src.exists():
+        raise HTTPException(status_code=404, detail="Source not found")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dst)
+    return {"renamed": True, "old_path": old_path, "new_path": new_path}
+
+
+@router.get("/vault/folders")
+async def list_vault_folders():
+    """List โฟลเดอร์ทั้งหมดใน vault (สำหรับ dropdown เลือก target)."""
+    vault_path = _get_vault_path()
+    folders: list[str] = []
+
+    def collect(path: Path, rel: str = ""):
+        for entry in sorted(path.iterdir()):
+            if entry.is_dir():
+                r = f"{rel}/{entry.name}" if rel else entry.name
+                folders.append(r)
+                collect(entry, r)
+
+    try:
+        collect(vault_path)
+    except Exception:
+        pass
+    return {"folders": folders}

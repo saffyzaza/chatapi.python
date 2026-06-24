@@ -48,8 +48,6 @@ app.include_router(accident_policy_router)
 app.include_router(error_log_router)
 app.include_router(thaijo_router)
 app.include_router(tools_router)
-app.include_router(obsidian_router)
-app.include_router(db_explorer_router)
 app.include_router(pdf_ingest_router)
 
 # ── Static UI pages ──────────────────────────────────────────────────────────

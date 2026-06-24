@@ -17,3 +17,5 @@ pdfplumber
 python-docx
 openpyxl
 xlrd
+python-multipart
+markdown

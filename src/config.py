@@ -42,7 +42,6 @@ class Settings(BaseSettings):
     MINIO_USE_SSL: bool = False
     MINIO_BUCKET: str = "fileapa"
     PDF_BUCKET: str = "pdf-library"
-    PDF_INGEST_PAGES_PER_CHUNK: int = 10
 
     @property
     def minio_endpoint_url(self) -> str:
@@ -63,6 +62,11 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # Obsidian / PDF Ingest
+    OBSIDIAN_VAULT_PATH: str = "/obsidian_vault/musya knowlads"
+    PDF_INGEST_PAGES_PER_CHUNK: int = 20  # หน้าต่อ chunk (เพิ่มจาก 10 → 20 ลด API calls)
+    PDF_INGEST_MAX_PARALLEL: int = 4      # จำนวน chunk ที่รันพร้อมกัน
 
     @property
     def db_dsn(self) -> str:

@@ -17,6 +17,8 @@ from src.agents.multi_csv_pipeline import run_multi_pipeline
 from src.agents.thaijo_agent import run_thaijo_pipeline
 from src.history import get_history, append_history, build_history_context
 from src.schemas.analyze import AnalyzeRequest
+from src.tools.vault_rag import detect_province_from_prompt, read_vault_context, get_vault_summary
+
 
 router = APIRouter(tags=["analyze"])
 
@@ -66,9 +68,33 @@ def _orchestrate(
                     "result": "คำถามชัดเจน ไม่ต้องปรับ",
                 })
 
-        # ── Stats mode: force multi-domain CSV routing, AI selects domains ────────
-        if mode == "stats":
-            from src.domains import DOMAINS as _DOMAINS
+        # ── Vault RAG: ดึงเอกสาร Obsidian ตามจังหวัดที่พบในคำถาม ───────────────
+        vault_ctx = ""
+        vault_province = detect_province_from_prompt(prompt)
+        if vault_province:
+            summary = get_vault_summary(vault_province)
+            if summary.get("file_count", 0) > 0:
+                put({
+                    "type": "agent_start",
+                    "step": "vault_rag",
+                    "agentName": "Vault RAG",
+                })
+                vault_ctx = read_vault_context(vault_province, max_chars=8000)
+                put({
+                    "type": "agent_done",
+                    "step": "vault_rag",
+                    "agentName": "Vault RAG",
+                    "result": (
+                        f"📚 โหลดเอกสาร {vault_province} จาก Obsidian vault "
+                        f"({summary['file_count']} ไฟล์ · {len(vault_ctx):,} chars)"
+                    ),
+                    "province": vault_province,
+                    "file_count": summary["file_count"],
+                })
+
+        # ── Tavily mode: ให้ Router ตัดสินใจว่าต้องค้น web หรือตอบจากความรู้ ────
+
+        if mode == "tavily":
             put({"type": "agent_start", "step": "router", "agentName": "Router Agent"})
 
             # ── Accident routing: d1 uses PostgreSQL not CSV ──────────────────
@@ -395,98 +421,13 @@ def _orchestrate(
                     domains=csv_domains, history_context=history_context,
                     history_section=history_section, session_id="",
                 )
-                put({"type": "agent_done", "step": "stats_gather", "agentName": "Stats Analyst",
-                     "result": "วิเคราะห์สถิติสำเร็จ"})
-
-            # ── ขั้นที่ 1: Stats (accident_chat_sql) เสร็จก่อน ──────────────────────────
-            with _cf.ThreadPoolExecutor(max_workers=1) as pool:
-                fs = pool.submit(_worker_stats)
-                _cf.wait([fs], timeout=300)
-
-            # ── ขั้นที่ 2: Thaijo + Obsidian + Tavily รันพร้อมกัน ────────────────────────
-            with _cf.ThreadPoolExecutor(max_workers=3) as pool:
-                ft = pool.submit(_worker_thaijo)
-                fo = pool.submit(_worker_obsidian)
-                fv = pool.submit(_worker_tavily)
-                _cf.wait([ft, fo, fv], timeout=180)
-
-            stats_final_msg  = stats_final_holder.get("msg", "")
-            tavily_final_msg = tavily_result_holder.get("msg", "")
-
-            # ── รวมผลลัพธ์ ────────────────────────────────────────────
-            thaijo_raw       = thaijo_result.get("articles_text", "")
-            thaijo_full_text = thaijo_result.get("full_text", "")
-            total_articles   = thaijo_result.get("article_count", 0)
-            term             = thaijo_result.get("term", prompt)
-            obs_content      = obsidian_result.get("content", "")
-            sep = "─" * 44 + "\n\n"
-
-            all_parts: list[str] = []
-
-            # ThaiJo — ใช้ full_text จาก pipeline (รวม summaries + insight แล้ว)
-            full_display = thaijo_full_text if thaijo_full_text else (
-                f"📚 บทความวิจัย ThaiJo — พบ {total_articles} บทความ\n\n"
-            )
-            if not full_display.endswith("\n"): full_display += "\n"
-            if thaijo_raw:
-                all_parts.append(
-                    f"=== บทความวิจัย ThaiJo ({total_articles} บทความ) ===\n{thaijo_raw}"
-                )
-
-            # Obsidian — แสดง content เต็ม
-            if obs_content:
-                full_display += (
-                    f"\n📖 คลังความรู้สุขภาพ เขต 10\n\n════════════════════════════════════════════\n\n"
-                    f"{obs_content}\n\n{sep}"
-                )
-                all_parts.append(f"=== คลังความรู้สุขภาพ เขต 10 ===\n{obs_content}")
-
-            # Stats — แสดงผลสถิติ
-            if stats_final_msg:
-                full_display += (
-                    f"📊 ข้อมูลสถิติสาธารณสุข\n\n════════════════════════════════════════════\n\n"
-                    f"{stats_final_msg}\n\n"
-                )
-                all_parts.append(f"=== ข้อมูลสถิติสาธารณสุข ===\n{stats_final_msg}")
-
-            # Tavily — ผลการค้นหาจากอินเทอร์เน็ต
-            if tavily_final_msg:
-                full_display += (
-                    f"🔍 ข้อมูลจากอินเทอร์เน็ต (Tavily Search)\n\n════════════════════════════════════════════\n\n"
-                    f"{tavily_final_msg}\n\n"
-                )
-                all_parts.append(f"=== ข้อมูลจากอินเทอร์เน็ต ===\n{tavily_final_msg}")
-
-            # ── Stream combined text to right pane ────────────────────────────
-            put({"type": "text_stream_start", "articleCount": total_articles})
-            chunk_size = 200
-            for i in range(0, len(full_display), chunk_size):
-                put({"type": "text_chunk", "text": full_display[i:i + chunk_size]})
-
-            # ── Final event — enables wizard ──────────────────────────────────
-            articles_text_combined = "\n\n".join(p for p in all_parts if p)
-            put({
-                "type":         "final",
-                "message":      f"รวบรวมข้อมูลจาก 4 แหล่งสำเร็จ สำหรับ: {report_title}",
-                "textResult":   full_display,
-                "articlesText": articles_text_combined,
-                "reportTitle":  report_title,
-                "articleCount": total_articles,
-                "agentSteps":   [],
-            })
-            return
-
-        # ── Tavily mode: ผู้ใช้เลือก "ค้นหาทั่วไป" → ไป Tavily โดยตรงทันที ────
-        if mode == "tavily":
-            from src.agents.tavily_pipeline import run_tavily_pipeline
-            run_tavily_pipeline(prompt=prompt, queue=queue, loop=loop,
-                                session_id=session_id, history_section=history_section)
-            return
-
-        # ── ThaiJo mode: ผู้ใช้เลือก "วิจัย" → ไป ThaiJo โดยตรงทันที ──────
-        if mode == "thaijo":
-            run_thaijo_pipeline(prompt=prompt, queue=queue, loop=loop,
-                                session_id=session_id, history_context=history_context)
+                reasoning = _run_agent(narrator,
+                    f"คำถาม: {prompt}\nDomain: {domain.name_th}\nอธิบายสั้นๆ ว่าจะตอบอย่างไร ตอบเป็นภาษาไทย",
+                    "คำอธิบายสั้นๆ เป็นภาษาไทย")
+                put({"type": "agent_done", "step": "reasoning", "agentName": "Reasoning Narrator", "result": reasoning})
+                run_pipeline(prompt=prompt, queue=queue, loop=loop, domain=domain,
+                             history_context=history_context, history_section=history_section,
+                             session_id=session_id, reasoning=reasoning, vault_ctx=vault_ctx)
             return
 
         # ── Normal mode: multi-domain aware routing ───────────────────────────
@@ -559,6 +500,8 @@ def _orchestrate(
                 history_context=history_context,
                 history_section=history_section,
                 session_id=session_id,
+                reasoning=reasoning,
+                vault_ctx=vault_ctx,
             )
         else:
             run_pipeline(
@@ -569,6 +512,8 @@ def _orchestrate(
                 history_context=history_context,
                 history_section=history_section,
                 session_id=session_id,
+                reasoning=reasoning,
+                vault_ctx=vault_ctx,
             )
 
     except Exception as exc:
