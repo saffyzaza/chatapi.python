@@ -1274,22 +1274,18 @@ def get_accident_schema(table_name: str = "") -> str:
 # ── Tool list ─────────────────────────────────────────────────────────────────
 
 ACCIDENT_CHAT_TOOLS = [
-    query_hotspot_roads,
-    query_district_road_comparison,
-    query_fatal_timeband,
-    query_weather_accident_stats,
-    query_behavior_stats,
-    query_seasonal_comparison,
-    query_weekend_vs_weekday,
-    query_monthly_vehicle_pattern,
-    query_late_night_vehicles,
-    query_kpi_trend,
-    query_serious_injury_ratio,
-    query_top_cause_shift,
-    query_district_death_vs_accident,
-    query_district_summary,
-    query_road_district_breakdown,
-    query_province_executive_summary,
-    execute_accident_sql,
-    get_accident_schema,
+    # ── Hotspot & area (พื้นที่เสี่ยง) ────────────────────────────────────────
+    query_hotspot_roads,            # จุดเสี่ยง / Black Spot รายถนน
+    query_district_summary,         # สรุปรายอำเภอ (อุบัติเหตุ/เสียชีวิต)
+    query_district_road_comparison, # สายรอง vs สายหลัก รายอำเภอ
+    query_road_district_breakdown,  # ถนนสายหนึ่งแยกตามอำเภอ
+    # ── Trend & KPI (แนวโน้ม) ─────────────────────────────────────────────────
+    query_kpi_trend,                # แนวโน้มรายปี
+    query_serious_injury_ratio,     # อัตราสาหัส
+    query_top_cause_shift,          # สาเหตุหลักเปลี่ยนระหว่างปี
+    # ── Time pattern (ช่วงเวลา) ───────────────────────────────────────────────
+    query_fatal_timeband,           # ช่วงเวลาเสี่ยง / EMS
+    # ── Summary & custom ──────────────────────────────────────────────────────
+    query_province_executive_summary,  # สรุปผู้บริหาร 1 หน้า
+    execute_accident_sql,           # SQL อิสระ (สภาพอากาศ/เทศกาล/วันหยุด/ยานพาหนะ ฯลฯ)
 ]

@@ -1,4 +1,4 @@
-"""Centralized Agent defaults and 429-aware crew kickoff helper."""
+"""Centralized Agent defaults and 429/503-aware crew kickoff helper."""
 import logging
 import time
 import asyncio
@@ -8,8 +8,25 @@ from src.config import get_settings
 logger = logging.getLogger(__name__)
 
 
+def _configure_litellm_retry() -> None:
+    """Set litellm global retry so ALL LLM calls (including crewai.flow.runtime)
+    retry on 429/503 before surfacing the error to callers."""
+    try:
+        import litellm
+        litellm.num_retries = 3
+        litellm.retry_on_failure = True
+        # ServiceUnavailableError (503) and RateLimitError (429) are retried by litellm
+        # when num_retries > 0; this covers crewai.flow.runtime.call_llm_native_tools
+        logger.info("litellm global retry configured: num_retries=3, retry_on_failure=True")
+    except Exception as exc:
+        logger.debug("Could not configure litellm retry: %s", exc)
+
+
+_configure_litellm_retry()
+
+
 def _patch_gemini_429_backoff() -> None:
-    """Monkey-patch CrewAI Agent to sleep on 429 before retrying."""
+    """Monkey-patch CrewAI Agent to sleep on 429/503 before retrying."""
     try:
         from crewai.agent.core import Agent as CrewAgent
     except ImportError:
@@ -33,12 +50,14 @@ def _patch_gemini_429_backoff() -> None:
         return delay
 
     def _patched_handle(self, e, task, context, tools):
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+        err = str(e)
+        if "429" in err or "RESOURCE_EXHAUSTED" in err or "503" in err or "UNAVAILABLE" in err:
             time.sleep(_get_delay(self))
         return _original_handle(self, e, task, context, tools)
 
     async def _patched_handle_async(self, e, task, context, tools):
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+        err = str(e)
+        if "429" in err or "RESOURCE_EXHAUSTED" in err or "503" in err or "UNAVAILABLE" in err:
             await asyncio.sleep(_get_delay(self))
         return await _original_handle_async(self, e, task, context, tools)
 
@@ -59,6 +78,8 @@ def agent_retry_kwargs() -> dict:
 _RETRYABLE_ERRORS = (
     "429",
     "RESOURCE_EXHAUSTED",
+    "503",
+    "UNAVAILABLE",
     "None or empty",
     "Invalid response from LLM",
 )
@@ -82,9 +103,15 @@ def kickoff_with_retry(crew, max_attempts: int = 3):
             except Exception as e:
                 err = str(e)
                 is_rate_limit = "429" in err or "RESOURCE_EXHAUSTED" in err
-                is_retryable = is_rate_limit or any(m in err for m in _RETRYABLE_ERRORS)
+                is_overloaded = "503" in err or "UNAVAILABLE" in err
+                is_retryable = is_rate_limit or is_overloaded or any(m in err for m in _RETRYABLE_ERRORS)
                 if is_retryable and attempt < max_attempts:
-                    sleep_secs = delay if is_rate_limit else 5
+                    if is_rate_limit:
+                        sleep_secs = delay
+                    elif is_overloaded:
+                        sleep_secs = min(30 * attempt, 90)
+                    else:
+                        sleep_secs = 5
                     logger.warning(
                         "Retryable error on attempt %d/%d (%s) — sleeping %ds",
                         attempt, max_attempts, err[:80], sleep_secs,
