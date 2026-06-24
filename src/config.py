@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Google Gemini
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-2.0-flash"
-    GEMINI_MODEL_PRO: str = "gemini-2.5-pro"
+    GEMINI_MODEL_PRO: str = "gemini-3.1-pro-preview"
     REPORT_MAX_TOKENS: int = 8192
 
     # Gemini retry (429 RESOURCE_EXHAUSTED)
@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     MINIO_SECRET_KEY: str = "minioadmin"
     MINIO_USE_SSL: bool = False
     MINIO_BUCKET: str = "fileapa"
+    PDF_BUCKET: str = "pdf-library"
 
     @property
     def minio_endpoint_url(self) -> str:
@@ -52,6 +53,11 @@ class Settings(BaseSettings):
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    # Obsidian / PDF Ingest
+    OBSIDIAN_VAULT_PATH: str = "/obsidian_vault/musya knowlads"
+    PDF_INGEST_PAGES_PER_CHUNK: int = 20  # หน้าต่อ chunk (เพิ่มจาก 10 → 20 ลด API calls)
+    PDF_INGEST_MAX_PARALLEL: int = 4      # จำนวน chunk ที่รันพร้อมกัน
 
     @property
     def db_dsn(self) -> str:

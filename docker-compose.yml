@@ -12,6 +12,9 @@ services:
     environment:
       - MINIO_ENDPOINT=minio
       - DB_HOST=postgres
+      - OBSIDIAN_VAULT_PATH=/obsidian_vault/musya knowlads
+    volumes:
+      - ../obsidian_vault:/obsidian_vault
     depends_on:
       postgres:
         condition: service_healthy

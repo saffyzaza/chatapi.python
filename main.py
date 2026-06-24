@@ -15,6 +15,7 @@ from src.routers.analyze import router as analyze_router
 from src.routers.error_log import router as error_log_router
 from src.routers.thaijo import router as thaijo_router
 from src.routers.tools_router import router as tools_router
+from src.routers.pdf_ingest import router as pdf_ingest_router
 
 load_dotenv()
 
@@ -45,6 +46,7 @@ app.include_router(accident_policy_router)
 app.include_router(error_log_router)
 app.include_router(thaijo_router)
 app.include_router(tools_router)
+app.include_router(pdf_ingest_router)
 
 # ── Static UI pages ──────────────────────────────────────────────────────────
 _STATIC_DIR = Path(__file__).parent / "src" / "static"

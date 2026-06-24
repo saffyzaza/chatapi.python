@@ -18,6 +18,8 @@ from src.agents.multi_csv_pipeline import run_multi_pipeline
 from src.agents.thaijo_agent import run_thaijo_pipeline
 from src.history import get_history, append_history, build_history_context
 from src.schemas.analyze import AnalyzeRequest
+from src.tools.vault_rag import detect_province_from_prompt, read_vault_context, get_vault_summary
+
 
 router = APIRouter(tags=["analyze"])
 
@@ -71,7 +73,32 @@ def _orchestrate(
                     "result": "คำถามชัดเจน ไม่ต้องปรับ",
                 })
 
+        # ── Vault RAG: ดึงเอกสาร Obsidian ตามจังหวัดที่พบในคำถาม ───────────────
+        vault_ctx = ""
+        vault_province = detect_province_from_prompt(prompt)
+        if vault_province:
+            summary = get_vault_summary(vault_province)
+            if summary.get("file_count", 0) > 0:
+                put({
+                    "type": "agent_start",
+                    "step": "vault_rag",
+                    "agentName": "Vault RAG",
+                })
+                vault_ctx = read_vault_context(vault_province, max_chars=8000)
+                put({
+                    "type": "agent_done",
+                    "step": "vault_rag",
+                    "agentName": "Vault RAG",
+                    "result": (
+                        f"📚 โหลดเอกสาร {vault_province} จาก Obsidian vault "
+                        f"({summary['file_count']} ไฟล์ · {len(vault_ctx):,} chars)"
+                    ),
+                    "province": vault_province,
+                    "file_count": summary["file_count"],
+                })
+
         # ── Tavily mode: ให้ Router ตัดสินใจว่าต้องค้น web หรือตอบจากความรู้ ────
+
         if mode == "tavily":
             put({"type": "agent_start", "step": "router", "agentName": "Router Agent"})
             decision, domain = route_with_web_search(prompt, history_context)
@@ -105,7 +132,7 @@ def _orchestrate(
                 put({"type": "agent_done", "step": "reasoning", "agentName": "Reasoning Narrator", "result": reasoning})
                 run_pipeline(prompt=prompt, queue=queue, loop=loop, domain=domain,
                              history_context=history_context, history_section=history_section,
-                             session_id=session_id, reasoning=reasoning)
+                             session_id=session_id, reasoning=reasoning, vault_ctx=vault_ctx)
             return
 
         # ── Normal mode: multi-domain aware routing ───────────────────────────
@@ -197,6 +224,7 @@ def _orchestrate(
                 history_section=history_section,
                 session_id=session_id,
                 reasoning=reasoning,
+                vault_ctx=vault_ctx,
             )
         else:
             run_pipeline(
@@ -208,6 +236,7 @@ def _orchestrate(
                 history_section=history_section,
                 session_id=session_id,
                 reasoning=reasoning,
+                vault_ctx=vault_ctx,
             )
 
     except Exception as exc:
