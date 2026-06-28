@@ -3,6 +3,8 @@ import asyncio
 import json
 import os
 import threading
+import time
+from datetime import datetime
 from typing import Any
 
 # จำกัด 5 AI pipelines พร้อมกันต่อ worker (4 workers = 20 concurrent รวม)
@@ -21,6 +23,53 @@ from src.tools.vault_rag import detect_province_from_prompt, read_vault_context,
 
 
 router = APIRouter(tags=["analyze"])
+
+
+def _sync_save_session(session_id: str, ai_text: str) -> None:
+    """Write AI response to chat_sessions so frontend can recover after refresh."""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST", "localhost"),
+            port=int(os.getenv("DB_PORT", "5432")),
+            dbname=os.getenv("DB_NAME", "musyadata"),
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", ""),
+            connect_timeout=5,
+        )
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT messages_json FROM chat_sessions WHERE session_id = %s",
+                    (session_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return
+                msgs = list(row[0] or [])
+                msgs.append({
+                    "id": f"ai-{int(time.time() * 1000)}-{session_id[-6:]}",
+                    "role": "ai",
+                    "text": ai_text,
+                    "timestamp": datetime.now().strftime("%H:%M"),
+                })
+                cur.execute(
+                    """UPDATE chat_sessions
+                       SET status = 'completed',
+                           messages_json = %s::jsonb,
+                           updated_at = NOW()
+                       WHERE session_id = %s AND status = 'running'""",
+                    (json.dumps(msgs, ensure_ascii=False), session_id),
+                )
+        conn.close()
+    except Exception:
+        pass  # Non-critical: frontend polling will retry
+
+
+async def _persist_session(session_id: str, ai_text: str) -> None:
+    """Async wrapper — runs DB save in thread pool (non-blocking)."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _sync_save_session, session_id, ai_text)
 
 
 def _orchestrate(
@@ -532,6 +581,9 @@ async def _handle_analyze(request: AnalyzeRequest) -> StreamingResponse:
     queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
     loop = asyncio.get_event_loop()
 
+    # Capture final AI text so we can persist it to DB (refresh recovery)
+    _final: dict[str, str] = {}
+
     client_history = (
         [{"role": m.role, "text": m.text} for m in request.history]
         if request.history else None
@@ -546,11 +598,24 @@ async def _handle_analyze(request: AnalyzeRequest) -> StreamingResponse:
     thread.start()
 
     async def stream():
-        while True:
-            event = await queue.get()
-            if event is None:
-                break
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        try:
+            while True:
+                event = await queue.get()
+                if event is None:
+                    break
+                # Capture the AI response text for DB persistence
+                if isinstance(event, dict):
+                    ev_type = event.get("type", "")
+                    if ev_type == "final" and event.get("message"):
+                        _final["text"] = str(event["message"])
+                    elif ev_type == "result" and event.get("content"):
+                        _final["text"] = str(event["content"])
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            # Persist AI response to DB — runs even if SSE client disconnected (refresh)
+            ai_text = _final.get("text", "")
+            if request.sessionId and ai_text:
+                asyncio.create_task(_persist_session(request.sessionId, ai_text))
 
     return StreamingResponse(
         stream(),

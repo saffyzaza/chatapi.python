@@ -9,6 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.config import get_settings
+from src.deps import InternalKeyMiddleware
 from src.routers.accident_chat import router as accident_chat_router
 from src.routers.accident_policy import router as accident_policy_router
 from src.routers.analyze import router as analyze_router
@@ -34,12 +35,17 @@ app = FastAPI(
     version="2.0.0",
 )
 
+# ── Middleware (applied in LIFO order — CORS first, then auth) ────────────────
+app.add_middleware(
+    InternalKeyMiddleware,
+    internal_key=s.INTERNAL_API_KEY,
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=s.cors_origin_list,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "x-internal-key"],
 )
 
 app.include_router(analyze_router)

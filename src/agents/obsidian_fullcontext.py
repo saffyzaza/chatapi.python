@@ -28,6 +28,10 @@ SYSTEM_PROMPT = """คุณคือผู้เชี่ยวชาญด้�
 
 ห้ามใส่หัวข้อ "แหล่งข้อมูล" ในคำตอบ — ระบบจะแสดงแหล่งอ้างอิงให้โดยอัตโนมัติ
 
+หลัง follow-up questions ให้เพิ่ม block นี้เสมอ (ห้ามละเว้น):
+<USED_FILES>["path/to/file1.md","path/to/file2.md"]</USED_FILES>
+ระบุ path ตรงตาม ## FILE: xxx ใน context ของไฟล์ที่ดึงข้อมูลมาใช้จริงในคำตอบนี้เท่านั้น ห้ามใส่ไฟล์ที่ไม่ได้ใช้
+
 **กฎ:**
 - ใช้เฉพาะข้อมูลจากเอกสาร — ห้ามสร้างตัวเลขขึ้นเอง
 - ถ้าหาไม่เจอ ระบุ "ไม่พบข้อมูลในคลังความรู้" พร้อมแนะนำคำค้นอื่น
@@ -136,6 +140,26 @@ def _call_gemini(system: str, user_message: str, s) -> str:
     return resp.choices[0].message.content or ""
 
 
+# ── Source citation helpers ────────────────────────────────────────────────────
+
+def _parse_used_files(answer: str) -> list[str] | None:
+    """ดึง list ของ file paths จาก <USED_FILES> block ที่ AI แทรกไว้ในคำตอบ."""
+    import json as _json
+    m = re.search(r'<USED_FILES>(.*?)</USED_FILES>', answer, re.DOTALL)
+    if not m:
+        return None
+    try:
+        result = _json.loads(m.group(1).strip())
+        return result if isinstance(result, list) else None
+    except Exception:
+        return None
+
+
+def _strip_used_files_block(answer: str) -> str:
+    """ลบ <USED_FILES> block ออกก่อนแสดงให้ผู้ใช้เห็น."""
+    return re.sub(r'\s*<USED_FILES>.*?</USED_FILES>\s*', '\n', answer, flags=re.DOTALL).strip()
+
+
 # ── Follow-up extractor ────────────────────────────────────────────────────────
 
 def _extract_follow_ups(text: str) -> list[str]:
@@ -200,6 +224,24 @@ def run_obsidian_ask_fullcontext(
         emit_progress(request_id, "🤖 Gemini Answer Writer", "done",
                       f"เขียนคำตอบเสร็จ ({elapsed}s)", elapsed)
 
+        # กรองเฉพาะไฟล์ที่ AI ใช้จริงในคำตอบ
+        used_files = _parse_used_files(answer)
+        answer = _strip_used_files_block(answer)
+
+        if used_files:
+            used_set = set(used_files)
+            filtered_paths = [p for p in file_paths if p in used_set]
+            if not filtered_paths:
+                # partial match — AI อาจระบุ path ไม่ครบ
+                filtered_paths = [
+                    p for p in file_paths
+                    if any(u in p or p in u for u in used_set)
+                ]
+            if not filtered_paths:
+                filtered_paths = file_paths[:4]
+        else:
+            filtered_paths = file_paths[:4]
+
         note_refs = [
             ObsidianNoteRef(
                 note_id=p.replace("/", "::"),
@@ -211,7 +253,7 @@ def run_obsidian_ask_fullcontext(
                     if p in minio_id_map else None
                 ),
             )
-            for p in file_paths[:15]
+            for p in filtered_paths[:10]
         ]
         follow_ups = _extract_follow_ups(answer)
 
