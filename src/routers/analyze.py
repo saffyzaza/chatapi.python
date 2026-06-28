@@ -70,6 +70,7 @@ def _orchestrate(
 
         # ── Vault RAG: ดึงเอกสาร Obsidian ตามจังหวัดที่พบในคำถาม ───────────────
         vault_ctx = ""
+        reasoning = ""  # default — stats path จะ override ด้วย narrator agent
         vault_province = detect_province_from_prompt(prompt)
         if vault_province:
             summary = get_vault_summary(vault_province)
