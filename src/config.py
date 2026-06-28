@@ -60,9 +60,6 @@ class Settings(BaseSettings):
     PORT: int = 8000
     LOG_LEVEL: str = "info"
 
-    # Internal API key — shared with Next.js frontend; required on every request
-    INTERNAL_API_KEY: str = ""
-
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 

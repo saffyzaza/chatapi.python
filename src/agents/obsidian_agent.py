@@ -249,7 +249,7 @@ def _extract_note_refs_from_db(content: str, question: str, vault_id: str) -> li
                 rows = query_db(
                     "SELECT note_id, title, province, district FROM obsidian_notes "
                     "WHERE vault_id = %s AND (content_stripped ILIKE %s OR title ILIKE %s) "
-                    "ORDER BY indexed_at DESC LIMIT 3",
+                    "ORDER BY indexed_at DESC LIMIT 5",
                     (vault_id, like, like),
                 )
                 for r in rows:
@@ -280,16 +280,7 @@ def _build_response(
     if len(tasks_output) >= 1:
         raw_search = getattr(tasks_output[0], "raw", None) or str(tasks_output[0])
 
-    all_refs = _extract_note_refs(raw_search) or _extract_note_refs_from_db(raw_search, question, vault_id)
-
-    # กรองเฉพาะ notes ที่ title หรือ note_id ปรากฏในคำตอบจริง
-    content_lower = content.lower()
-    notes_referenced = [
-        r for r in all_refs
-        if (r.title and r.title.lower() in content_lower)
-        or (r.note_id and r.note_id.replace("::", "/").lower() in content_lower)
-    ] or all_refs[:4]  # fallback ถ้า filter ได้ 0 ใช้ 4 อันแรก
-
+    notes_referenced = _extract_note_refs(raw_search) or _extract_note_refs_from_db(raw_search, question, vault_id)
     follow_ups = _extract_follow_ups(content)
 
     return ObsidianAskResponse(
