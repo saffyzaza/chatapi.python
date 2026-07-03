@@ -108,10 +108,21 @@ def _gemini_model_fast() -> str:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _sanitize_filename(name: str) -> str:
-    """ลบอักขระพิเศษที่ไม่เหมาะกับชื่อไฟล์ แต่รักษา Thai/Unicode"""
+    """ลบอักขระพิเศษที่ไม่เหมาะกับชื่อไฟล์ แต่รักษา Thai/Unicode
+
+    ตัดความยาวตามจำนวน **byte ของ UTF-8** ไม่ใช่จำนวนตัวอักษร — ภาษาไทย
+    เข้ารหัสเป็น 3 byte/ตัวอักษร ชื่อไฟล์ 120 ตัวอักษรอาจยาวถึง 360 byte
+    ซึ่งเกินขีดจำกัด 255 byte/path-component ของ ext4 ทำให้เกิด
+    OSError: [Errno 36] File name too long ตอน mkdir/เขียนไฟล์
+    """
     name = re.sub(r'[\\/:*?"<>|]', '-', name)
     name = name.strip('. ')
-    return name[:120] if len(name) > 120 else name
+    max_bytes = 150  # เผื่อที่ให้ suffix ที่ต่อท้ายภายหลัง เช่น -ส่วนที่99, -INDEX.md, .pdf
+    encoded = name.encode('utf-8')
+    if len(encoded) <= max_bytes:
+        return name
+    # ตัดที่ระดับ byte แล้ว decode กลับแบบไม่ทำลาย multi-byte character ที่ถูกตัดครึ่ง
+    return encoded[:max_bytes].decode('utf-8', errors='ignore')
 
 
 def _get_vault_path() -> Path:
@@ -596,7 +607,7 @@ def _do_ingest(
         run_ai_name = not override_folder_name
         run_ai_loc = not override_province or override_province == "auto"
 
-        base_filename = override_folder_name or ""
+        base_filename = _sanitize_filename(override_folder_name) if override_folder_name else ""
         province = override_province if (override_province and override_province != "auto") else None
         district = override_district if (override_district and override_district != "auto") else None
         confidence = "manual"
@@ -613,7 +624,9 @@ def _do_ingest(
                     fut_loc  = meta_pool.submit(_ai_detect_location,  gemini_client, uploaded_file, sample_text, original_name)
                 
                 if fut_name:
-                    base_filename = fut_name.result()
+                    # ตัดความยาวทันทีที่ได้ชื่อจาก AI — ทุกจุดที่ใช้ base_filename ต่อ
+                    # (ชื่อไฟล์ chunk, PDF, index) จะได้ค่าที่ปลอดภัยแล้วเหมือนกันหมด
+                    base_filename = _sanitize_filename(fut_name.result())
                 if fut_loc:
                     location = fut_loc.result()
                     province = location["province"]

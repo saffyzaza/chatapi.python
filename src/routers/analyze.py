@@ -18,6 +18,7 @@ from src.agents.thaijo_agent import run_thaijo_pipeline
 from src.history import get_history, append_history, build_history_context
 from src.schemas.analyze import AnalyzeRequest
 from src.tools.vault_rag import detect_province_from_prompt, read_vault_context, get_vault_summary
+from src.domains import DOMAINS as _DOMAINS
 
 
 router = APIRouter(tags=["analyze"])
@@ -93,9 +94,12 @@ def _orchestrate(
                     "file_count": summary["file_count"],
                 })
 
-        # ── Tavily mode: ให้ Router ตัดสินใจว่าต้องค้น web หรือตอบจากความรู้ ────
+        # ── Stats mode: อุบัติเหตุใช้ PostgreSQL (SQL) ตรง ๆ, d2-d4 ใช้ CSV pipeline ──
+        # (เดิมโค้ดนี้ถูกวางไว้ผิดที่ใต้ mode == "tavily" ทำให้ปุ่ม "สถิติ" ไม่เคยเรียก
+        # Accident SQL Agent เลย และปุ่ม "ค้นหาทั่วไป" ก็ไปเรียก CSV pipeline แทนที่จะ
+        # ค้นเว็บจริง — ดู mode == "tavily" ด้านล่างสำหรับ web search ที่ถูกต้อง)
 
-        if mode == "tavily":
+        if mode == "stats":
             put({"type": "agent_start", "step": "router", "agentName": "Router Agent"})
 
             # ── Accident routing: d1 uses PostgreSQL not CSV ──────────────────
@@ -209,6 +213,16 @@ def _orchestrate(
                     history_context=history_context, history_section=history_section,
                     session_id=session_id,
                 )
+            return
+
+        # ── Tavily mode: ค้นหาข้อมูลจากอินเทอร์เน็ตด้วย Tavily Search จริง ──────────
+        if mode == "tavily":
+            from src.agents.tavily_pipeline import run_tavily_pipeline
+            run_tavily_pipeline(
+                prompt=prompt, queue=queue, loop=loop,
+                session_id=session_id, history_section=history_section,
+                reasoning=reasoning,
+            )
             return
 
         # ── Obsidian mode: forced Knowledge Vault routing ─────────────────────
@@ -380,12 +394,18 @@ def _orchestrate(
 
                 # ⚠️ อุบัติเหตุทางถนน (d1) เก็บใน PostgreSQL ไม่ใช่ CSV/MinIO (ดูคอมเมนต์
                 # _CSV_DOMAIN_CODES ใน router.py: "d1=PostgreSQL") — ต้อง redirect ไปยัง
-                # accident pipeline เหมือนที่ mode == "stats" ทำไว้แล้ว (ดูบรรทัด ~75)
+                # accident pipeline เหมือนที่ mode == "stats" ทำไว้แล้ว (ดูบรรทัด ~109)
                 # ไม่อย่างนั้น run_multi_pipeline จะถูกบังคับให้ค้นเฉพาะใน d2/d3/d4
                 # (ไม่มีข้อมูลอุบัติเหตุอยู่เลยสักไฟล์) แล้วสุ่มเลือก CSV ผิด domain มาแทน
                 # (เช่น สุขภาพจิต/โภชนาการ) — ตรงกับปัญหาที่ผู้ใช้รายงานว่าถามอุบัติเหตุ
                 # แล้วระบบไม่ไปค้นหา domain อุบัติเหตุเลย
-                if _has_accident_signal(prompt):
+                #
+                # ⚠️ ใช้ is_accident_question() ไม่ใช่ _has_accident_signal() เฉย ๆ —
+                # ตัวหลังเช็คแค่ keyword ตรง ๆ (พลาดได้ถ้าพิมพ์ผิด/ใช้คำพ้องที่ list ไม่มี
+                # เช่น "อุบัเหตุ" สะกดผิด หรือ "ความปลอดภัยทางถนน" ที่ไม่มีคำว่าอุบัติเหตุ)
+                # is_accident_question() เช็ค keyword ก่อน (เร็ว) แล้วถ้า keyword ไม่เจอ
+                # จึงให้ LLM ช่วยตัดสินใจอีกที — เหมือนที่ mode == "stats" ทำอยู่แล้ว
+                if is_accident_question(prompt, history_context):
                     # ── เรียก SQL โดยตรง ไม่ผ่าน CrewAI/LLM ────────────────
                     # (LLM ล้มเหลวด้วย "None or empty" เมื่อ tool output รวมใหญ่เกิน)
                     from src.tools.accident_chat_sql import (
@@ -422,13 +442,58 @@ def _orchestrate(
                     domains=csv_domains, history_context=history_context,
                     history_section=history_section, session_id="",
                 )
-                reasoning = _run_agent(narrator,
-                    f"คำถาม: {prompt}\nDomain: {domain.name_th}\nอธิบายสั้นๆ ว่าจะตอบอย่างไร ตอบเป็นภาษาไทย",
-                    "คำอธิบายสั้นๆ เป็นภาษาไทย")
-                put({"type": "agent_done", "step": "reasoning", "agentName": "Reasoning Narrator", "result": reasoning})
-                run_pipeline(prompt=prompt, queue=queue, loop=loop, domain=domain,
-                             history_context=history_context, history_section=history_section,
-                             session_id=session_id, reasoning=reasoning, vault_ctx=vault_ctx)
+
+            # ── รัน 4 worker พร้อมกัน (parallel) แล้วรอให้ครบทุกตัว ──────────────
+            # ⚠️ เดิมโค้ดจบแค่ตรงนี้ (return ทันที) — worker ทั้ง 4 ตัวข้างบนถูก
+            # define ไว้แต่ไม่เคยถูกเรียกเลย ทำให้ "สร้างรายงาน" ไม่ทำอะไรเลย
+            # ปิด stream ทันทีแบบไม่มี event ใด ๆ ส่งกลับ — ฝั่ง frontend เห็นเป็น
+            # "กำลังประมวลผล" ค้างตลอดไป (ไม่มี final/result/error ให้ resolve)
+            put({"type": "text_stream_start", "articleCount": 0})
+            with _cf.ThreadPoolExecutor(max_workers=4) as ex:
+                futures = {
+                    ex.submit(_worker_thaijo):   "thaijo",
+                    ex.submit(_worker_obsidian): "obsidian",
+                    ex.submit(_worker_stats):    "stats",
+                    ex.submit(_worker_tavily):   "tavily",
+                }
+                for fut in _cf.as_completed(futures):
+                    name = futures[fut]
+                    try:
+                        fut.result()
+                    except Exception as exc:
+                        put({"type": "agent_done", "step": name, "agentName": name, "result": f"ผิดพลาด: {exc}"})
+
+            # ── รวมผลลัพธ์จากทั้ง 4 แหล่งเป็นรายงานเดียว ──────────────────────────
+            sections = []
+            if obsidian_result.get("content"):
+                sections.append(f"## คลังความรู้สุขภาพ เขต 10\n\n{obsidian_result['content']}")
+            if stats_final_holder.get("msg"):
+                sections.append(f"## สถิติสาธารณสุข\n\n{stats_final_holder['msg']}")
+            if thaijo_result.get("full_text"):
+                sections.append(f"## งานวิจัยที่เกี่ยวข้อง\n\n{thaijo_result['full_text']}")
+            if tavily_result_holder.get("msg"):
+                sections.append(f"## ข้อมูลจากอินเทอร์เน็ต\n\n{tavily_result_holder['msg']}")
+
+            combined_text = "\n\n---\n\n".join(sections) if sections else (
+                "ไม่พบข้อมูลที่เกี่ยวข้องจากแหล่งข้อมูลใดเลย (สถิติ/คลังความรู้/งานวิจัย/เว็บ) "
+                "ลองระบุคำถามให้เจาะจงมากขึ้น เช่น ระบุจังหวัดหรือหัวข้อสุขภาพที่ต้องการ"
+            )
+
+            for i in range(0, len(combined_text), 400):
+                put({"type": "text_chunk", "text": combined_text[i:i + 400]})
+
+            if session_id:
+                append_history(session_id, "assistant", combined_text)
+
+            put({
+                "type": "final",
+                "message": combined_text,
+                "textResult": combined_text,
+                "articlesText": thaijo_result.get("articles_text", ""),
+                "articleCount": thaijo_result.get("article_count", 0),
+                "reportTitle": report_title,
+                "agentSteps": [],
+            })
             return
 
         # ── Normal mode: multi-domain aware routing ───────────────────────────
