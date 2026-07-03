@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 
@@ -47,12 +47,9 @@ class Settings(BaseSettings):
     def minio_endpoint_url(self) -> str:
         return f"{self.MINIO_ENDPOINT}:{self.MINIO_PORT}"
 
-    # Obsidian Knowledge Vault
-    OBSIDIAN_VAULT_PATH: str = str(Path(__file__).parent / "obsidian_knowledge")
+    # Vault / PDF Ingest (DB-native — no filesystem path needed)
     OBSIDIAN_DEFAULT_VAULT: str = "health_region_10"
-    OBSIDIAN_ENABLED: bool = True
     OBSIDIAN_SEARCH_THRESHOLD: float = 0.1
-    OBSIDIAN_RAW_PDF_PATH: str = "obsidian_raw_pdf"
     OBSIDIAN_PDF_MINIO_PREFIX: str = "obsidian-pdfs"
 
     # Server
@@ -64,7 +61,6 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
     # Obsidian / PDF Ingest
-    OBSIDIAN_VAULT_PATH: str = "/obsidian_vault/musya knowlads"
     PDF_INGEST_PAGES_PER_CHUNK: int = 20  # หน้าต่อ chunk (เพิ่มจาก 10 → 20 ลด API calls)
     PDF_INGEST_MAX_PARALLEL: int = 4      # จำนวน chunk ที่รันพร้อมกัน
 

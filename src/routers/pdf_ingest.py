@@ -1,5 +1,6 @@
-"""PDF Ingest Router — แปลง PDF → Markdown chunks → บันทึกใน Obsidian vault (musya knowlads).
+"""PDF Ingest Router — แปลง PDF → Markdown chunks → บันทึกใน PostgreSQL (obsidian_notes).
 จัดระเบียบตามโครงสร้าง เขต10 / จังหวัด / อำเภอ ของสาธารณสุขเขต 10.
+หมายเหตุ (028): MD chunks ถูกเก็บใน database โดยตรง (ไม่ใช่ filesystem)
 """
 import io
 import json
@@ -22,6 +23,7 @@ from google.genai import types
 
 from src.config import get_settings
 from src.tools.minio import _get_client, _bucket
+from src.db.pool import execute_db, query_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/pdf", tags=["PDF Ingest"])
@@ -114,18 +116,58 @@ def _sanitize_filename(name: str) -> str:
     return name[:120] if len(name) > 120 else name
 
 
-def _get_vault_path() -> Path:
-    s = get_settings()
-    vault = Path(s.OBSIDIAN_VAULT_PATH)
-    vault.mkdir(parents=True, exist_ok=True)
-    return vault
+# ── DB helpers ────────────────────────────────────────────────────────────────
+
+VAULT_ID = "health_region_10"
 
 
-def _get_zone10_base() -> Path:
-    """เส้นทาง เขต10/ ภายใน vault."""
-    zone = _get_vault_path() / "เขต10"
-    zone.mkdir(parents=True, exist_ok=True)
-    return zone
+def _upsert_note(
+    note_id: str,
+    relative_path: str,
+    title: str,
+    province: str | None,
+    district: str | None,
+    note_type: str,
+    tags: list[str],
+    source_file: str,
+    content: str,
+    file_id: str | None = None,
+    chunk_index: int = 0,
+    is_index: bool = False,
+    year: int | None = None,
+) -> None:
+    """UPSERT หนึ่ง note เข้า obsidian_notes."""
+    import re as _re
+    # strip YAML frontmatter เพื่อเก็บใน content_stripped
+    stripped = _re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, count=1, flags=_re.DOTALL).strip()
+    execute_db(
+        """
+        INSERT INTO obsidian_notes
+            (note_id, vault_id, relative_path, title, province, district,
+             note_type, tags, source_file, year, content, content_stripped,
+             file_id, chunk_index, is_index, updated_at, indexed_at)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+        ON CONFLICT (note_id) DO UPDATE SET
+            title            = EXCLUDED.title,
+            province         = EXCLUDED.province,
+            district         = EXCLUDED.district,
+            note_type        = EXCLUDED.note_type,
+            tags             = EXCLUDED.tags,
+            source_file      = EXCLUDED.source_file,
+            year             = EXCLUDED.year,
+            content          = EXCLUDED.content,
+            content_stripped = EXCLUDED.content_stripped,
+            file_id          = EXCLUDED.file_id,
+            chunk_index      = EXCLUDED.chunk_index,
+            is_index         = EXCLUDED.is_index,
+            updated_at       = NOW()
+        """,
+        (
+            note_id, VAULT_ID, relative_path, title, province, district,
+            note_type, tags, source_file, year, content, stripped,
+            file_id, chunk_index, is_index,
+        ),
+    )
 
 
 def _extract_pages(file_bytes: bytes) -> list[str]:
@@ -290,111 +332,136 @@ def _ai_detect_location(client, uploaded_file, sample_text: str, original_pdf_na
 
 
 
-def _resolve_save_path(
-    vault_path: Path,
+def _resolve_rel_path(
     province: str | None,
     district: str | None,
     base_filename: str,
-) -> tuple[Path, str]:
+) -> str:
     """
-    คำนวณ path ที่จะบันทึกไฟล์ และ relative path สำหรับแสดงผล.
-    ทุก PDF จะถูกเก็บในโฟลเดอร์ชื่อเดียวกับเอกสารเสมอ เพื่อไม่ให้ไฟล์ MD กระจัดกระจาย
+    คำนวณ relative path (ใช้เป็น note_id prefix) ตามโครงสร้างเขต 10.
 
-    - มีจังหวัดเท่านั้น → เขต10/{province}/{base_filename}/
-    - มีจังหวัด+อำเภอ  → เขต10/{province}/{district}/{base_filename}/
-    - (บังคับให้มีจังหวัดเสมอ หากไม่มีจะใช้ อุบลราชธานี เป็นค่าเริ่มต้น)
-
-    Returns:
-        (absolute_path, display_relative_path)
+    - มีจังหวัดเท่านั้น → เขต10/{province}/{base_filename}
+    - มีจังหวัด+อำเภอ  → เขต10/{province}/{district}/{base_filename}
+    - ไม่มีจังหวัด     → {base_filename}
     """
-    zone_base = vault_path / "เขต10"
     safe_name = _sanitize_filename(base_filename)
-
-    if not district:
-        # ระบุเฉพาะจังหวัด → โฟลเดอร์เอกสารใต้จังหวัด
-        save_dir = zone_base / province / safe_name
-        rel = f"เขต10/{province}/{safe_name}"
-    else:
-        # ระบุทั้งจังหวัดและอำเภอ
-        save_dir = zone_base / province / district / safe_name
-        rel = f"เขต10/{province}/{district}/{safe_name}"
-
-    save_dir.mkdir(parents=True, exist_ok=True)
-    return save_dir, rel
+    if province and district:
+        return f"เขต10/{province}/{district}/{safe_name}"
+    if province:
+        return f"เขต10/{province}/{safe_name}"
+    return safe_name
 
 
-def _update_province_index(
-    vault_path: Path,
+def _update_province_index_db(
     province: str,
     district: str | None,
     base_filename: str,
-    index_filename: str,
+    index_note_id: str,
     total_pages: int,
 ):
-    """อัปเดต INDEX.md ของจังหวัด/อำเภอ เพิ่ม link ไปยังโฟลเดอร์เอกสารใหม่."""
-    zone_base = vault_path / "เขต10"
+    """อัปเดต INDEX note ของจังหวัด/อำเภอใน DB เพิ่ม link ไปยังเอกสารใหม่."""
     safe_name = _sanitize_filename(base_filename)
     date_str = datetime.now().strftime('%d/%m/%Y')
 
-    # wikilink ชี้ไปที่ INDEX ภายในโฟลเดอร์ของเอกสาร
     if district:
-        doc_index_link = f"{district}/{safe_name}/{index_filename.replace('.md', '')}"
+        doc_link = f"{district}/{safe_name}/{safe_name}-INDEX"
     else:
-        doc_index_link = f"{safe_name}/{index_filename.replace('.md', '')}"
+        doc_link = f"{safe_name}/{safe_name}-INDEX"
 
-    entry = f"\n- [[{doc_index_link}|📄 {base_filename}]] ({total_pages} หน้า · {date_str})"
+    entry = f"\n- [[{doc_link}|📄 {base_filename}]] ({total_pages} หน้า · {date_str})"
 
     try:
-        # อัปเดต INDEX.md ของจังหวัด
-        prov_index = zone_base / province / "INDEX.md"
-        if prov_index.exists():
-            content = prov_index.read_text(encoding="utf-8")
-            if "[[เขต10/INDEX" in content:
-                content = content.replace("[[เขต10/INDEX", f"{entry}\n\n[[เขต10/INDEX")
-            else:
-                content += entry
-            prov_index.write_text(content, encoding="utf-8")
+        # อัปเดต INDEX note ของจังหวัด
+        prov_note_id = f"{VAULT_ID}::เขต10/{province}/INDEX"
+        rows = query_db(
+            "SELECT content FROM obsidian_notes WHERE note_id = %s",
+            (prov_note_id,),
+        )
+        if rows:
+            old_content = rows[0]["content"] or ""
+            new_content = old_content + entry
+            execute_db(
+                "UPDATE obsidian_notes SET content = %s, content_stripped = %s, updated_at = NOW() WHERE note_id = %s",
+                (new_content, new_content, prov_note_id),
+            )
 
-        # อัปเดต INDEX.md ของอำเภอ (ถ้ามี)
+        # อัปเดต INDEX note ของอำเภอ (ถ้ามี)
         if district:
-            dist_index = zone_base / province / district / "INDEX.md"
-            if not dist_index.exists():
-                dist_index.write_text(
+            dist_note_id = f"{VAULT_ID}::เขต10/{province}/{district}/INDEX"
+            rows = query_db(
+                "SELECT content FROM obsidian_notes WHERE note_id = %s",
+                (dist_note_id,),
+            )
+            if not rows:
+                # สร้าง INDEX note ของอำเภอใหม่
+                dist_content = (
                     f"# {district} — {province}\n\n"
                     f"> **เขตสุขภาพที่ 10** · [[{province}/INDEX|← {province}]]\n\n"
-                    f"## เอกสาร\n",
-                    encoding="utf-8",
+                    f"## เอกสาร\n"
                 )
-            content = dist_index.read_text(encoding="utf-8")
-            dist_entry = f"\n- [[{safe_name}/{index_filename.replace('.md', '')}|📄 {base_filename}]] ({total_pages} หน้า · {date_str})"
-            content += dist_entry
-            dist_index.write_text(content, encoding="utf-8")
+                _upsert_note(
+                    note_id=dist_note_id,
+                    relative_path=f"เขต10/{province}/{district}/INDEX.md",
+                    title=f"INDEX — {district}",
+                    province=province,
+                    district=district,
+                    note_type="MOC",
+                    tags=["index", province, district],
+                    source_file="",
+                    content=dist_content,
+                    is_index=True,
+                )
+                rows = [{"content": dist_content}]
+            old_content = rows[0]["content"] or ""
+            dist_entry = f"\n- [[{safe_name}/{safe_name}-INDEX|📄 {base_filename}]] ({total_pages} หน้า · {date_str})"
+            new_content = old_content + dist_entry
+            execute_db(
+                "UPDATE obsidian_notes SET content = %s, content_stripped = %s, updated_at = NOW() WHERE note_id = %s",
+                (new_content, new_content, dist_note_id),
+            )
     except Exception as e:
-        logger.warning(f"Failed to update province index: {e}")
+        logger.warning(f"Failed to update province index in DB: {e}")
 
 
 # ── AI: Generate filename from content ───────────────────────────────────────
 
 def _ai_generate_filename(client, uploaded_file, original_pdf_name: str) -> str:
-    """ให้ Gemini 3 Pro วิเคราะห์เนื้อหาและสร้างชื่อไฟล์ภาษาไทย."""
-    prompt = f"""วิเคราะห์ไฟล์ PDF ที่แนบมานี้ทั้งหมด แล้วสรุป 'ชื่อเอกสาร' ภาษาไทยที่สื่อความหมายชัดเจนและครอบคลุมเนื้อหาหลักของเอกสารนี้มากที่สุด
+    """ให้ Gemini วิเคราะห์เนื้อหาและสร้างชื่อโฟลเดอร์ภาษาไทยที่ระบุได้ชัดเจน"""
+    prompt = f"""วิเคราะห์ไฟล์ PDF นี้ทั้งหมด แล้วตั้งชื่อโฟลเดอร์สำหรับเอกสารนี้ โดยใช้รูปแบบ:
+[prefix]ชื่อเรื่อง-สถานที่-ปี
 
-กฎการตั้งชื่อ:
-- ต้องเป็นชื่อที่อ่านแล้วเข้าใจทันทีว่าเป็นเอกสารเกี่ยวกับอะไร
-- ห้ามใช้คำเดี่ยวๆ ที่ไม่มีความหมาย เช่น "การ", "รายงาน", "สรุป"
-- หากเอกสารมีชื่อเรื่องหรือหัวข้อหลักอยู่แล้ว ให้นำมาใช้ได้เลย
-- ห้ามมีนามสกุลไฟล์ (เช่น .pdf)
-- ใช้ขีดกลาง (-) แทนช่องว่าง
-- ความยาว 10 ถึง 80 ตัวอักษร
-- ตอบกลับมา **เฉพาะชื่อไฟล์เท่านั้น** ห้ามมีคำอธิบายเพิ่มเติมใดๆ ทั้งสิ้น"""
+**prefix** (เลือกอันเดียว):
+- R_ = รายงาน / สรุปผลการดำเนินงาน / ผลการประเมิน
+- M_ = งานวิจัย / วิทยานิพนธ์ / จะแนะการศึกษา
+- F_ = ฟอร์มสำรวจ / สถิติ / ข้อมูลระดับเขต
+- P_ = แผนงาน / โครงการ / นโยบาย
+- A_ = คู่มือ / แนวทางปฏิบัติ / มาตรฐาน
+- I_ = บันทึกการประชุม / รายงานการตรวจราชการ
+
+**ชื่อเรื่อง** (บังคับ):
+- ต้องระบุเนื้อหาสำคัญสูงสุดให้ชัดเจน เช่น: พฤติกรรมสุขภาพ-ผู้สูงอายุ, โรคทางเดินอาหาร, อะฟลาทอกสาย
+- หามใช้คำกำกวม เช่น: การดำเนินงาน, สาธารณสุข
+
+**สถานที่** (ใส่ถ้าระบุไว้ในเอกสาร): ชื่อจังหวัดหรืออำเภอ เช่น: มุกดาหาร, อุบลราชธานี
+
+**ปี** (ใส่ถ้าพบ): ปี พ.ศ. สั้น เช่น: 2565, 2567
+
+ตัวอย่างชื่อที่ดี:
+- R_รายงานตรวจราชการ-มุกดาหาร-2565
+- M_พฤติกรรมสุขภาพ-ผู้สูงอายุ-อุบล-2564
+- F_สถิติอะฟลาทอกสาย-ศรีสะเกษ
+- P_แผนปฏิบัติการ-เขต10-2566
+
+ชื่อไฟล์ต้นฉบับ: {original_pdf_name}
+กฎ: ใช้ขีดกลาง (-) แทนช่องว่าง ห้ามไอ้อักษรพิเศษ ความยาว 20-100 ตัวอักษร ตอบเฉพาะชื่อเท่านั้น"""
 
     try:
         response = client.models.generate_content(
-            model=_gemini_model_fast(),  # Flash: เร็วกว่า Pro ~3x สำหรับ task นี้
+            model=_gemini_model_fast(),
             contents=[uploaded_file, prompt],
             config=types.GenerateContentConfig(
-                max_output_tokens=100,
-                temperature=0.3,
+                max_output_tokens=120,
+                temperature=0.2,
             ),
         )
         raw_name = response.text.strip()
@@ -407,6 +474,7 @@ def _ai_generate_filename(client, uploaded_file, original_pdf_name: str) -> str:
         logger.warning(f"AI filename generation failed: {e}")
         base = original_pdf_name.replace('.pdf', '').replace('.PDF', '')
         return _sanitize_filename(base)
+
 
 
 # ── AI: Convert text chunk to Markdown ───────────────────────────────────────
@@ -637,24 +705,23 @@ def _do_ingest(
         log(f"📍 ตำแหน่ง: {loc_str} (ความแม่นยำ: {confidence})")
         log(f"   เหตุผล: {reason}")
 
-        # 6. Resolve save directory — สร้างโฟลเดอร์ชื่อเอกสารเสมอ
-        vault_path = _get_vault_path()
-        save_dir, rel_path = _resolve_save_path(vault_path, province, district, base_filename)
-        log(f"📁 สร้างโฟลเดอร์: {rel_path}/")
+        # 6. Resolve relative path prefix (ใช้แทน filesystem path)
+        rel_path = _resolve_rel_path(province, district, base_filename)
+        log(f"📁 โครงสร้าง DB path: {rel_path}/")
 
-        # Pre-compute all chunk filenames
+        # Pre-compute all chunk names
+        safe_name = _sanitize_filename(base_filename)
         chunk_filenames = []
         for i in range(total_chunks):
             if total_chunks == 1:
-                chunk_filenames.append(base_filename)
+                chunk_filenames.append(safe_name)
             else:
-                chunk_filenames.append(f"{base_filename}-ส่วนที่{i+1:02d}")
+                chunk_filenames.append(f"{safe_name}-ส่วนที่{i+1:02d}")
 
         # 7. Convert each chunk to MD (parallel)
         created_files: list[str] = []
         md_results: dict[int, str] = {}
 
-        # ── สร้าง args สำหรับแต่ละ chunk ────────────────────────────────────
         def _convert_chunk(i: int) -> tuple[int, str]:
             chunk_num = i + 1
             page_start = i * chunk_size + 1
@@ -690,24 +757,60 @@ def _do_ingest(
                 log(f"✅ แปลงส่วนที่ {chunk_num}/{total_chunks} สำเร็จ (หน้า {page_start}–{page_end})")
                 md_results[idx] = content
 
-        # ── บันทึกตามลำดับ ────────────────────────────────────────────────────
+        # ── บันทึก chunks ลง Database (แทน filesystem) ────────────────────────
+        current_year = datetime.now().year
         for i in range(total_chunks):
-            md_filename = chunk_filenames[i] + ".md"
-            md_path = save_dir / md_filename
-            md_path.write_text(md_results[i], encoding="utf-8")
-            created_files.append(f"{rel_path}/{md_filename}")
-            log(f"💾 บันทึก: {rel_path}/{md_filename}")
+            chunk_name = chunk_filenames[i]
+            note_id = f"{VAULT_ID}::{rel_path}/{chunk_name}"
+            chunk_num = i + 1
+            page_start = i * chunk_size + 1
+            page_end = min(page_start + chunk_size - 1, total_pages)
+            _upsert_note(
+                note_id=note_id,
+                relative_path=f"{rel_path}/{chunk_name}.md",
+                title=f"{base_filename} (ส่วนที่ {chunk_num}/{total_chunks})",
+                province=province,
+                district=district,
+                note_type="report",
+                tags=["pdf-ingest", province or "ส่วนกลาง"],
+                source_file=original_name,
+                content=md_results[i],
+                file_id=file_id,
+                chunk_index=i + 1,
+                is_index=False,
+                year=current_year,
+            )
+            created_files.append(f"{rel_path}/{chunk_name}.md")
+            log(f"💾 บันทึก DB: {rel_path}/{chunk_name}.md")
 
-        # 7.5 Save original PDF to Vault
-        pdf_filename = f"{base_filename}.pdf"
-        pdf_path = save_dir / pdf_filename
-        pdf_path.write_bytes(file_bytes)
-        created_files.append(f"{rel_path}/{pdf_filename}")
-        log(f"💾 บันทึก PDF ต้นฉบับ: {rel_path}/{pdf_filename}")
+        # 7.5 Register PDF ใน obsidian_pdf_assets (link กลับ MinIO)
+        log("📎 ลงทะเบียน PDF ต้นฉบับใน obsidian_pdf_assets...")
+        # สร้าง index_note_id ก่อนเพื่อใช้เป็น FK
+        index_note_id = f"{VAULT_ID}::{rel_path}/{safe_name}-INDEX"
+        try:
+            s_cfg = get_settings()
+            scheme = "https" if s_cfg.MINIO_USE_SSL else "http"
+            minio_url = f"{scheme}://{s_cfg.minio_endpoint_url}/{s_cfg.PDF_BUCKET}/{file_id}"
+            execute_db(
+                """
+                INSERT INTO obsidian_pdf_assets
+                    (province, note_id, filename, minio_path, minio_url, file_size, content_type)
+                VALUES (%s, %s, %s, %s, %s, %s, 'application/pdf')
+                ON CONFLICT (minio_path) DO UPDATE SET
+                    filename  = EXCLUDED.filename,
+                    note_id   = EXCLUDED.note_id,
+                    minio_url = EXCLUDED.minio_url,
+                    file_size = EXCLUDED.file_size
+                """,
+                (province or "ส่วนกลาง", index_note_id, original_name, file_id, minio_url, len(file_bytes)),
+            )
+            log(f"✅ ลงทะเบียน PDF ใน obsidian_pdf_assets เรียบร้อย")
+        except Exception as pdf_reg_err:
+            logger.warning(f"Failed to register PDF in obsidian_pdf_assets: {pdf_reg_err}")
+            log(f"⚠️ ไม่สามารถลงทะเบียน PDF ได้: {pdf_reg_err}")
 
-        # 8. Create index file
-        log("📚 กำลังสร้างไฟล์ Index...")
-        safe_name = _sanitize_filename(base_filename)
+        # 8. Create INDEX note ใน DB
+        log("📚 กำลังสร้าง Index note ใน DB...")
         breadcrumb = ""
         if province:
             breadcrumb = f"\n\n[[เขต10/INDEX|เขต 10]] > [[เขต10/{province}/INDEX|{province}]]"
@@ -722,8 +825,8 @@ def _do_ingest(
             f"> **จังหวัด:** {province or 'ไม่ระบุ'} | **อำเภอ:** {district or 'ไม่ระบุ'}\n",
             f"> **วันที่ ingest:** {datetime.now().strftime('%d %B %Y %H:%M')}\n",
             breadcrumb,
-            "\n---\n\n## 📎 ไฟล์แนบ\n",
-            f"- [[{pdf_filename}]]\n",
+            "\n---\n\n## 📎 ไฟล์ PDF ต้นฉบับ (MinIO)\n",
+            f"- file_id: `{file_id}` (ดูผ่าน /pdf/view/{file_id})\n",
             "\n## 📑 รายการส่วน\n",
         ]
         for i, fname in enumerate(chunk_filenames):
@@ -731,15 +834,29 @@ def _do_ingest(
             page_end = min(page_start + chunk_size - 1, total_pages)
             index_lines.append(f"- [[{fname}|ส่วนที่ {i+1}: หน้า {page_start}–{page_end}]]")
 
-        index_filename = f"{base_filename}-INDEX.md"
-        index_path = save_dir / index_filename
-        index_path.write_text("\n".join(index_lines), encoding="utf-8")
-        log(f"✅ สร้าง Index: {rel_path}/{index_filename}")
+        index_content = "\n".join(index_lines)
+        _upsert_note(
+            note_id=index_note_id,
+            relative_path=f"{rel_path}/{safe_name}-INDEX.md",
+            title=f"{base_filename} — ดัชนี",
+            province=province,
+            district=district,
+            note_type="MOC",
+            tags=["pdf-ingest", "index", province or "ส่วนกลาง"],
+            source_file=original_name,
+            content=index_content,
+            file_id=file_id,
+            chunk_index=0,
+            is_index=True,
+            year=current_year,
+        )
+        index_filename = f"{safe_name}-INDEX.md"
+        log(f"✅ สร้าง Index note: {rel_path}/{index_filename}")
 
-        # 9. Update province/district INDEX.md
+        # 9. อัปเดต INDEX note ของจังหวัด/อำเภอใน DB
         if province:
-            _update_province_index(vault_path, province, district, base_filename, index_filename, total_pages)
-            log(f"🔗 อัปเดต Index จังหวัด {province} แล้ว")
+            _update_province_index_db(province, district, base_filename, index_note_id, total_pages)
+            log(f"🔗 อัปเดต Index จังหวัด {province} ใน DB แล้ว")
 
         # 9.5 Update metadata in MinIO to persist ingest status
         try:
@@ -783,7 +900,7 @@ def _do_ingest(
             "total_chunks": total_chunks,
             "created_files": created_files,
             "index_file": f"{rel_path}/{index_filename}",
-            "vault_path": str(save_dir),
+            "vault_path": f"[database] {rel_path}",
             "province": province,
             "district": district,
             "location_confidence": confidence,
@@ -987,18 +1104,49 @@ async def view_pdf(file_id: str):
 
 @router.get("/files")
 async def list_pdf_files():
-    """List PDF files ทั้งหมดใน MinIO bucket."""
+    """List PDF files ทั้งหมดใน MinIO bucket พร้อม cross-check ข้อมูล ingest จาก DB."""
     import urllib.parse
 
     client_minio = _get_client()
     bucket = _pdf_bucket()
+
+    # ดึงข้อมูล ingest ทั้งหมดจาก DB ครั้งเดียว (key = file_id)
+    db_all = query_db(
+        """
+        SELECT file_id,
+               source_file,
+               COUNT(*) AS chunks,
+               MIN(province)  AS province,
+               MIN(district)  AS district,
+               MIN(relative_path) AS sample_path
+        FROM obsidian_notes
+        WHERE file_id IS NOT NULL OR source_file IS NOT NULL
+        GROUP BY file_id, source_file
+        """,
+        ()
+    )
+    # Map 1: by file_id (exact MinIO object name) — highest priority
+    db_by_fileid: dict = {}
+    # Map 2: by source_file name (original PDF name) — fallback for legacy data
+    db_by_sourcefile: dict = {}
+    for r in db_all:
+        fid = str(r["file_id"]) if r["file_id"] else None
+        sfn = str(r["source_file"]) if r["source_file"] else None
+        if fid:
+            prev = db_by_fileid.get(fid)
+            if not prev or int(r["chunks"]) > int(prev["chunks"]):
+                db_by_fileid[fid] = r
+        if sfn:
+            prev = db_by_sourcefile.get(sfn)
+            if not prev or int(r["chunks"]) > int(prev["chunks"]):
+                db_by_sourcefile[sfn] = r
 
     try:
         objects = list(client_minio.list_objects(bucket, recursive=True))
         files = []
         for obj in objects:
             name = obj.object_name
-            if name.endswith("__apa.json") or name.endswith("__path.json"):
+            if name.endswith("__apa.json") or name.endswith("__path.json") or name.endswith(".json"):
                 continue
             try:
                 stat = client_minio.stat_object(bucket, name)
@@ -1006,53 +1154,68 @@ async def list_pdf_files():
                 ext = meta.get("x-amz-meta-extension", "").lower()
                 orig_name = urllib.parse.unquote(meta.get("x-amz-meta-name", name))
 
-                if ext == "pdf" or orig_name.lower().endswith(".pdf"):
-                    # Check in-memory jobs (first priority for running/queued, fallback for completed)
-                    in_memory_job = next(
-                        (j for j in _jobs.values() if j.get("file_id") == name),
-                        None
-                    )
-                    
-                    # Read metadata persisted in MinIO
-                    meta_ingested = meta.get("x-amz-meta-ingested") == "true"
-                    meta_province = urllib.parse.unquote(meta.get("x-amz-meta-province", "")) or None
-                    meta_district = urllib.parse.unquote(meta.get("x-amz-meta-district", "")) or None
-                    meta_savedat = urllib.parse.unquote(meta.get("x-amz-meta-savedat", "")) or None
-                    meta_confidence = meta.get("x-amz-meta-confidence", "") or None
-                    
-                    if in_memory_job:
-                        job_status = in_memory_job.get("status")
-                        job_result = in_memory_job.get("result") or {}
-                        
-                        ingested = (job_status == "completed") or meta_ingested
-                        province = job_result.get("province") or meta_province
-                        district = job_result.get("district") or meta_district
-                        saved_at = job_result.get("saved_at") or meta_savedat
-                        location_confidence = job_result.get("location_confidence") or meta_confidence
-                        ingest_status = job_status
-                        ingest_job_id = in_memory_job.get("job_id")
-                    else:
-                        ingested = meta_ingested
-                        province = meta_province
-                        district = meta_district
-                        saved_at = meta_savedat
-                        location_confidence = meta_confidence
-                        ingest_status = "completed" if meta_ingested else None
-                        ingest_job_id = None
+                if ext and ext not in ("pdf", ""):
+                    continue
+                if not orig_name.lower().endswith(".pdf") and not name.lower().endswith(".pdf") and ext != "pdf":
+                    continue
 
-                    files.append({
-                        "id": name,
-                        "name": orig_name,
-                        "size": obj.size,
-                        "uploaded_at": meta.get("x-amz-meta-uploadedat", ""),
-                        "ingested": ingested,
-                        "ingestJobId": ingest_job_id,
-                        "ingestStatus": ingest_status,
-                        "province": province,
-                        "district": district,
-                        "saved_at": saved_at,
-                        "location_confidence": location_confidence,
-                    })
+                # --- ข้อมูลจาก DB (source of truth) ---
+                # Priority: match by file_id > match by source_file name > none
+                db_row = db_by_fileid.get(str(name))
+                if not db_row:
+                    db_row = db_by_sourcefile.get(orig_name)
+                db_ingested = db_row is not None and int(db_row.get("chunks") or 0) > 0
+                db_province = db_row["province"] if db_row else None
+                db_district = db_row["district"] if db_row else None
+                db_chunks = int(db_row["chunks"]) if db_row else 0
+                db_saved_at = "/".join(db_row["sample_path"].split("/")[:-1]) if db_row and db_row.get("sample_path") else None
+
+                # --- ข้อมูลจาก MinIO metadata (fallback) ---
+                meta_ingested = meta.get("x-amz-meta-ingested") == "true"
+                meta_province = urllib.parse.unquote(meta.get("x-amz-meta-province", "")) or None
+                meta_district = urllib.parse.unquote(meta.get("x-amz-meta-district", "")) or None
+                meta_savedat = urllib.parse.unquote(meta.get("x-amz-meta-savedat", "")) or None
+                meta_confidence = meta.get("x-amz-meta-confidence", "") or None
+
+                # --- in-memory job (running/queued override) ---
+                in_memory_job = next(
+                    (j for j in _jobs.values() if j.get("file_id") == name),
+                    None
+                )
+
+                if in_memory_job:
+                    job_status = in_memory_job.get("status")
+                    job_result = in_memory_job.get("result") or {}
+                    ingested = db_ingested or (job_status == "completed") or meta_ingested
+                    province = job_result.get("province") or db_province or meta_province
+                    district = job_result.get("district") or db_district or meta_district
+                    saved_at = job_result.get("saved_at") or db_saved_at or meta_savedat
+                    location_confidence = job_result.get("location_confidence") or meta_confidence
+                    ingest_status = job_status
+                    ingest_job_id = in_memory_job.get("job_id")
+                else:
+                    ingested = db_ingested or meta_ingested
+                    province = db_province or meta_province
+                    district = db_district or meta_district
+                    saved_at = db_saved_at or meta_savedat
+                    location_confidence = meta_confidence
+                    ingest_status = "completed" if ingested else None
+                    ingest_job_id = None
+
+                files.append({
+                    "id": name,
+                    "name": orig_name,
+                    "size": obj.size,
+                    "uploaded_at": meta.get("x-amz-meta-uploadedat", str(int(obj.last_modified.timestamp() * 1000)) if obj.last_modified else ""),
+                    "ingested": ingested,
+                    "ingestJobId": ingest_job_id,
+                    "ingestStatus": ingest_status,
+                    "province": province,
+                    "district": district,
+                    "saved_at": saved_at,
+                    "location_confidence": location_confidence,
+                    "notes_count": db_chunks,   # จำนวน chunks ใน DB
+                })
             except Exception:
                 pass
         files.sort(key=lambda f: f.get("uploaded_at", ""), reverse=True)
@@ -1081,77 +1244,184 @@ async def delete_pdf_file(file_id: str):
 
 @router.get("/vault/files")
 async def list_vault_files():
-    """List Markdown files ใน Obsidian vault แบบ tree structure."""
-    vault_path = _get_vault_path()
-    zone_base = vault_path / "เขต10"
+    """List Markdown notes จาก database (obsidian_notes) แบบ tree structure.
 
-    def scan_dir(path: Path, relative: str = "") -> list[dict]:
-        items = []
-        try:
-            for entry in sorted(path.iterdir()):
-                rel = f"{relative}/{entry.name}" if relative else entry.name
-                if entry.is_dir():
-                    children = scan_dir(entry, rel)
-                    items.append({
-                        "type": "folder",
-                        "name": entry.name,
-                        "path": rel,
-                        "children": children,
-                    })
-                elif entry.suffix == ".md":
-                    stat = entry.stat()
-                    items.append({
-                        "type": "file",
-                        "name": entry.name,
-                        "path": rel,
-                        "size": stat.st_size,
-                        "modified_at": stat.st_mtime,
-                    })
-        except Exception:
-            pass
-        return items
+    หมายเหตุ (028): เปลี่ยนจาก filesystem scan เป็น DB query
+    """
+    rows = query_db(
+        """
+        SELECT note_id, relative_path, title, province, district, note_type,
+               is_index, chunk_index, file_id,
+               length(content) AS size,
+               EXTRACT(EPOCH FROM updated_at)::bigint AS modified_at
+        FROM obsidian_notes
+        WHERE vault_id = %s
+        ORDER BY province NULLS LAST, relative_path
+        """,
+        (VAULT_ID,),
+    )
 
-    # Build zone 10 tree
+    # ── Build tree grouped by province/district ────────────────────────────────
+    from collections import defaultdict
+
+    # group notes by province
+    by_province: dict[str, list] = defaultdict(list)
+    root_notes = []
+    for r in rows:
+        prov = r.get("province")
+        if prov and r["relative_path"].startswith("เขต10/"):
+            by_province[prov].append(r)
+        else:
+            root_notes.append(r)
+
+    def _note_to_file(r: dict) -> dict:
+        rel = r["relative_path"]  # e.g. เขต10/อุบล/docname/chunk.md
+        name = rel.split("/")[-1]  # filename
+        return {
+            "type": "file",
+            "name": name,
+            "path": rel.replace(".md", ""),   # use path without .md as note_id suffix
+            "size": r.get("size") or 0,
+            "modified_at": r.get("modified_at") or 0,
+            "file_id": r.get("file_id"),
+            "is_index": r.get("is_index") or False,
+        }
+
     zone10_tree = []
-    if zone_base.exists():
-        for province in ZONE10_PROVINCES:
-            prov_path = zone_base / province
-            if prov_path.exists():
-                zone10_tree.append({
-                    "type": "folder",
-                    "name": province,
-                    "path": f"เขต10/{province}",
-                    "children": scan_dir(prov_path, f"เขต10/{province}"),
-                })
+    for province in ZONE10_PROVINCES:
+        prov_notes = by_province.get(province, [])
+        if not prov_notes:
+            continue
 
-    # Root level items (folders/files not in zone10)
-    root_files = []
-    for entry in sorted(vault_path.iterdir()):
-        if entry.name == "เขต10":
-            continue  # skip zone10 — handled separately
-        if entry.is_dir():
-            # โฟลเดอร์เอกสารที่ไม่ระบุจังหวัด
-            root_files.append({
-                "type": "folder",
-                "name": entry.name,
-                "path": entry.name,
-                "children": scan_dir(entry, entry.name),
-            })
-        elif entry.is_file() and entry.suffix == ".md":
-            stat = entry.stat()
-            root_files.append({
-                "type": "file",
-                "name": entry.name,
-                "path": entry.name,
-                "size": stat.st_size,
-                "modified_at": stat.st_mtime,
-            })
+        # group by district
+        by_district: dict[str | None, list] = defaultdict(list)
+        for r in prov_notes:
+            by_district[r.get("district")].append(r)
+
+        prov_children = []
+        for dist, dist_notes in by_district.items():
+            # group by document folder (base_name = path segment after province/district)
+            by_doc: dict[str, list] = defaultdict(list)
+            for r in dist_notes:
+                parts = r["relative_path"].replace(".md", "").split("/")
+                # parts: [เขต10, province, (district?), docfolder, filename]
+                doc_folder = parts[-2] if len(parts) >= 2 else "root"
+                by_doc[doc_folder].append(r)
+
+            if dist:
+                dist_children = []
+                for doc_folder, doc_notes in sorted(by_doc.items()):
+                    folder_files = [_note_to_file(r) for r in doc_notes]
+                    # Try get file_id from index note
+                    idx_note = next((r for r in doc_notes if r.get("is_index")), None)
+                    dist_children.append({
+                        "type": "folder",
+                        "name": doc_folder,
+                        "path": f"เขต10/{province}/{dist}/{doc_folder}",
+                        "children": folder_files,
+                        "file_id": idx_note["file_id"] if idx_note else None,
+                    })
+                prov_children.append({
+                    "type": "folder",
+                    "name": dist,
+                    "path": f"เขต10/{province}/{dist}",
+                    "children": dist_children,
+                })
+            else:
+                for doc_folder, doc_notes in sorted(by_doc.items()):
+                    folder_files = [_note_to_file(r) for r in doc_notes]
+                    idx_note = next((r for r in doc_notes if r.get("is_index")), None)
+                    prov_children.append({
+                        "type": "folder",
+                        "name": doc_folder,
+                        "path": f"เขต10/{province}/{doc_folder}",
+                        "children": folder_files,
+                        "file_id": idx_note["file_id"] if idx_note else None,
+                    })
+
+        zone10_tree.append({
+            "type": "folder",
+            "name": province,
+            "path": f"เขต10/{province}",
+            "children": prov_children,
+        })
+
+    root_files = [_note_to_file(r) for r in root_notes]
 
     return {
         "zone10": zone10_tree,
         "root_files": root_files,
         "provinces": list(ZONE10_PROVINCES.keys()),
-        "vault_path": str(vault_path),
+        "vault_path": "[database]",
+    }
+
+
+@router.get("/vault/db-stats")
+async def get_vault_db_stats():
+    """
+    แสดงสถิติข้อมูล Vault ที่เก็บใน database — ใช้สำหรับตรวจสอบว่าข้อมูลเข้า DB จริง.
+    """
+    # summary
+    summary = query_db("""
+        SELECT
+            COUNT(*)                                    AS total_notes,
+            COUNT(CASE WHEN is_index THEN 1 END)        AS index_notes,
+            COUNT(CASE WHEN NOT is_index THEN 1 END)    AS chunk_notes,
+            COUNT(DISTINCT province)                    AS provinces,
+            COUNT(DISTINCT source_file)                 AS source_files,
+            COUNT(file_id)                              AS with_pdf_link,
+            MAX(updated_at)                             AS last_updated
+        FROM obsidian_notes
+        WHERE vault_id = %s
+    """, (VAULT_ID,))
+
+    # per province breakdown
+    by_province = query_db("""
+        SELECT
+            COALESCE(province, '(ไม่ระบุ)')    AS province,
+            COUNT(*)                            AS notes,
+            COUNT(CASE WHEN is_index THEN 1 END) AS index_notes,
+            COUNT(DISTINCT district)            AS districts,
+            COUNT(file_id)                      AS with_pdf,
+            COUNT(DISTINCT source_file)         AS documents
+        FROM obsidian_notes
+        WHERE vault_id = %s
+        GROUP BY province
+        ORDER BY province NULLS LAST
+    """, (VAULT_ID,))
+
+    # recent 10 notes
+    recent = query_db("""
+        SELECT
+            note_id,
+            relative_path,
+            title,
+            province,
+            district,
+            is_index,
+            chunk_index,
+            file_id,
+            TO_CHAR(updated_at, 'YYYY-MM-DD HH24:MI') AS updated
+        FROM obsidian_notes
+        WHERE vault_id = %s
+        ORDER BY updated_at DESC
+        LIMIT 10
+    """, (VAULT_ID,))
+
+    s = summary[0] if summary else {}
+    return {
+        "vault_id": VAULT_ID,
+        "summary": {
+            "total_notes": s.get("total_notes", 0),
+            "index_notes": s.get("index_notes", 0),
+            "chunk_notes": s.get("chunk_notes", 0),
+            "provinces": s.get("provinces", 0),
+            "source_files": s.get("source_files", 0),
+            "with_pdf_link": s.get("with_pdf_link", 0),
+            "last_updated": str(s.get("last_updated", "")) if s.get("last_updated") else None,
+        },
+        "by_province": by_province,
+        "recent_notes": recent,
     }
 
 
@@ -1173,33 +1443,38 @@ async def get_zone10_structure():
     }
 
 
-# ── Vault CRUD endpoints ──────────────────────────────────────────────────────
+# ── Vault CRUD endpoints (DB-based since migration 028) ───────────────────────
 
 from fastapi import Body
 
-def _safe_vault_path(vault_path: Path, rel: str) -> Path:
-    """ป้องกัน path traversal — ตรวจสอบว่า path อยู่ใน vault เสมอ."""
-    resolved = (vault_path / rel).resolve()
-    if not str(resolved).startswith(str(vault_path.resolve())):
-        raise HTTPException(status_code=400, detail="Invalid path")
-    return resolved
+
+def _note_id_from_path(path: str) -> str:
+    """แปลง relative path (จาก frontend) เป็น note_id ใน DB."""
+    # path อาจมี .md หรือไม่ก็ได้ — normalize โดยไม่มี .md
+    clean = path.replace(".md", "")
+    return f"{VAULT_ID}::{clean}"
 
 
 @router.get("/vault/file")
 async def read_vault_file(path: str):
-    """อ่านเนื้อหาของไฟล์ Markdown ใน vault."""
-    vault_path = _get_vault_path()
-    target = _safe_vault_path(vault_path, path)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
-    content = target.read_text(encoding="utf-8")
-    stat = target.stat()
+    """อ่านเนื้อหา Markdown note จาก database."""
+    note_id = _note_id_from_path(path)
+    rows = query_db(
+        "SELECT note_id, relative_path, title, content, is_index, "
+        "length(content) AS size, EXTRACT(EPOCH FROM updated_at)::bigint AS modified_at "
+        "FROM obsidian_notes WHERE note_id = %s",
+        (note_id,),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Note not found: {path}")
+    r = rows[0]
+    name = r["relative_path"].split("/")[-1]
     return {
         "path": path,
-        "name": target.name,
-        "content": content,
-        "size": stat.st_size,
-        "modified_at": stat.st_mtime,
+        "name": name,
+        "content": r["content"] or "",
+        "size": r.get("size") or 0,
+        "modified_at": r.get("modified_at") or 0,
     }
 
 
@@ -1208,64 +1483,177 @@ async def write_vault_file(
     path: str,
     body: dict = Body(...),
 ):
-    """สร้างหรืออัปเดตเนื้อหาไฟล์ Markdown ใน vault."""
+    """อัปเดตหรือสร้าง Markdown note ใน database."""
+    import re as _re
     content = body.get("content", "")
-    vault_path = _get_vault_path()
-    target = _safe_vault_path(vault_path, path)
-    # สร้างโฟลเดอร์ parent ถ้ายังไม่มี
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    stat = target.stat()
-    return {"path": path, "size": stat.st_size, "modified_at": stat.st_mtime}
+    note_id = _note_id_from_path(path)
+    stripped = _re.sub(r'^---\s*\n.*?\n---\s*\n', '', content, count=1, flags=_re.DOTALL).strip()
+    name = path.replace(".md", "").split("/")[-1]
+    relative_path = path if path.endswith(".md") else path + ".md"
+
+    rows = query_db("SELECT note_id FROM obsidian_notes WHERE note_id = %s", (note_id,))
+    if rows:
+        execute_db(
+            "UPDATE obsidian_notes SET content = %s, content_stripped = %s, updated_at = NOW() WHERE note_id = %s",
+            (content, stripped, note_id),
+        )
+    else:
+        # สร้าง note ใหม่
+        _upsert_note(
+            note_id=note_id,
+            relative_path=relative_path,
+            title=name,
+            province=None,
+            district=None,
+            note_type="report",
+            tags=[],
+            source_file="",
+            content=content,
+        )
+    return {"path": path, "size": len(content.encode()), "modified_at": int(time.time())}
 
 
 @router.delete("/vault/file")
 async def delete_vault_file(path: str):
-    """ลบไฟล์หรือโฟลเดอร์ออกจาก vault."""
-    import shutil
-    vault_path = _get_vault_path()
-    target = _safe_vault_path(vault_path, path)
-    if not target.exists():
-        raise HTTPException(status_code=404, detail="Not found")
-    if target.is_dir():
-        shutil.rmtree(target)
-    else:
-        target.unlink()
+    """ลบ note หรือ prefix ทั้งหมดออกจาก database."""
+    note_id = _note_id_from_path(path)
+    # ลบ exact match
+    rows = query_db("SELECT note_id FROM obsidian_notes WHERE note_id = %s", (note_id,))
+    if rows:
+        execute_db("DELETE FROM obsidian_notes WHERE note_id = %s", (note_id,))
+        return {"deleted": True, "path": path, "count": 1}
+    # ลบทั้ง prefix (folder delete)
+    prefix = note_id + "::"
+    # note_id format: VAULT_ID::rel/path — ลบที่มี rel/path ขึ้นต้นด้วย clean path
+    clean = path.replace(".md", "")
+    execute_db(
+        "DELETE FROM obsidian_notes WHERE vault_id = %s AND relative_path LIKE %s",
+        (VAULT_ID, f"{clean}%"),
+    )
     return {"deleted": True, "path": path}
 
 
 @router.post("/vault/rename")
 async def rename_vault_file(body: dict = Body(...)):
-    """เปลี่ยนชื่อ หรือย้ายไฟล์/โฟลเดอร์ภายใน vault."""
+    """เปลี่ยนชื่อ note ใน database (อัปเดต note_id และ relative_path)."""
     old_path = body.get("old_path", "")
     new_path = body.get("new_path", "")
     if not old_path or not new_path:
         raise HTTPException(status_code=400, detail="old_path and new_path required")
-    vault_path = _get_vault_path()
-    src = _safe_vault_path(vault_path, old_path)
-    dst = _safe_vault_path(vault_path, new_path)
-    if not src.exists():
+    old_id = _note_id_from_path(old_path)
+    new_id = _note_id_from_path(new_path)
+    new_rel = new_path if new_path.endswith(".md") else new_path + ".md"
+    rows = query_db("SELECT note_id FROM obsidian_notes WHERE note_id = %s", (old_id,))
+    if not rows:
         raise HTTPException(status_code=404, detail="Source not found")
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    src.rename(dst)
+    execute_db(
+        "UPDATE obsidian_notes SET note_id = %s, relative_path = %s, updated_at = NOW() WHERE note_id = %s",
+        (new_id, new_rel, old_id),
+    )
     return {"renamed": True, "old_path": old_path, "new_path": new_path}
 
 
 @router.get("/vault/folders")
 async def list_vault_folders():
-    """List โฟลเดอร์ทั้งหมดใน vault (สำหรับ dropdown เลือก target)."""
-    vault_path = _get_vault_path()
-    folders: list[str] = []
+    """List folder paths ที่มีใน obsidian_notes (สำหรับ dropdown)."""
+    rows = query_db(
+        "SELECT DISTINCT relative_path FROM obsidian_notes WHERE vault_id = %s ORDER BY relative_path",
+        (VAULT_ID,),
+    )
+    folders: set[str] = set()
+    for r in rows:
+        parts = r["relative_path"].replace(".md", "").split("/")
+        for i in range(1, len(parts)):
+            folders.add("/".join(parts[:i]))
+    return {"folders": sorted(folders)}
 
-    def collect(path: Path, rel: str = ""):
-        for entry in sorted(path.iterdir()):
-            if entry.is_dir():
-                r = f"{rel}/{entry.name}" if rel else entry.name
-                folders.append(r)
-                collect(entry, r)
 
-    try:
-        collect(vault_path)
-    except Exception:
-        pass
-    return {"folders": folders}
+# ── PDF View Endpoints ────────────────────────────────────────────────────────
+
+@router.get("/view/obsidian/{asset_id}")
+async def view_obsidian_pdf(asset_id: int):
+    """Stream PDF จาก MinIO โดยค้นหา minio_path จาก obsidian_pdf_assets.
+
+    ใช้ asset_id (PK ของ obsidian_pdf_assets) เพื่อ serve PDF ต้นฉบับแบบ inline.
+    """
+    from fastapi.responses import Response
+    rows = query_db(
+        "SELECT minio_path, filename, content_type FROM obsidian_pdf_assets WHERE id = %s",
+        (asset_id,),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Asset not found: {asset_id}")
+    r = rows[0]
+    minio_path = r["minio_path"]
+    content_type = r.get("content_type") or "application/pdf"
+    filename = r.get("filename") or "document.pdf"
+
+    # ลอง pdf-library bucket ก่อน (file_id เก็บ minio_path โดยตรง)
+    client_minio = _get_client()
+    s_cfg = get_settings()
+    for bucket in (s_cfg.PDF_BUCKET, "obsidian-pdfs", s_cfg.MINIO_BUCKET):
+        try:
+            resp = client_minio.get_object(bucket, minio_path)
+            data = resp.read()
+            return Response(
+                content=data,
+                media_type=content_type,
+                headers={"Content-Disposition": f'inline; filename="{filename}"'},
+            )
+        except Exception:
+            continue
+    raise HTTPException(status_code=404, detail=f"PDF not found in MinIO: {minio_path}")
+
+
+@router.get("/view/obsidian/by-note/{note_id:path}")
+async def view_obsidian_pdf_by_note(note_id: str):
+    """Stream PDF ต้นฉบับของ note ที่กำหนด (ค้นจาก obsidian_pdf_assets.note_id)."""
+    from fastapi.responses import Response
+    full_note_id = f"{VAULT_ID}::{note_id}" if not note_id.startswith(VAULT_ID) else note_id
+    rows = query_db(
+        "SELECT id, minio_path, filename, content_type FROM obsidian_pdf_assets WHERE note_id = %s",
+        (full_note_id,),
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No PDF linked to note: {note_id}")
+    r = rows[0]
+    minio_path = r["minio_path"]
+    content_type = r.get("content_type") or "application/pdf"
+    filename = r.get("filename") or "document.pdf"
+
+    client_minio = _get_client()
+    s_cfg = get_settings()
+    for bucket in (s_cfg.PDF_BUCKET, "obsidian-pdfs", s_cfg.MINIO_BUCKET):
+        try:
+            resp = client_minio.get_object(bucket, minio_path)
+            data = resp.read()
+            return Response(
+                content=data,
+                media_type=content_type,
+                headers={"Content-Disposition": f'inline; filename="{filename}"'},
+            )
+        except Exception:
+            continue
+    raise HTTPException(status_code=404, detail=f"PDF not found in MinIO: {minio_path}")
+
+
+# -- Filesystem to Database Migration -----------------------------------------
+
+@router.post("/vault/migrate-from-filesystem")
+async def migrate_vault_from_filesystem():
+    """
+    (Legacy) ระบบย้ายมาใช้ database แล้ว — ไม่มี filesystem vault อีกต่อไป.
+    ข้อมูลทั้งหมดอยู่ใน obsidian_notes table แล้ว.
+    """
+    rows = query_db(
+        "SELECT COUNT(*) AS total FROM obsidian_notes WHERE vault_id = %s",
+        (VAULT_ID,)
+    )
+    total = rows[0]["total"] if rows else 0
+    return {
+        "message": f"Vault is already database-native. {total} notes in DB. No filesystem migration needed.",
+        "vault_path": "[database]",
+        "imported": 0,
+        "errors": [],
+        "files": [],
+    }
