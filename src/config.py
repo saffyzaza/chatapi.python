@@ -23,16 +23,34 @@ class Settings(BaseSettings):
     GEMINI_MODEL_PRO: str = "gemini-2.5-pro"
     REPORT_MAX_TOKENS: int = 8192
 
-    # Gemini retry (429 RESOURCE_EXHAUSTED)
+    # Gemini retry (429 RESOURCE_EXHAUSTED / 503 UNAVAILABLE)
+    # ⚠️ base delay เดิม 60s ทำให้ exponential backoff (60→120→240s, cap 300s) รวมสูงสุด
+    # ต่อ 1 agent step เกือบ 7 นาที — สำหรับแชท interactive ที่ผู้ใช้รอผลอยู่ ค่านี้นานเกินไป
+    # มาก (Google เองแนะนำ backoff เริ่มต้นระดับวินาทีเดียวสำหรับ 503 "ลองใหม่ในไม่ช้า")
+    # ลดเหลือ base 8s (พร้อม cap ใน agent_defaults._get_delay ที่ 45s) ให้ผลรวม ~56s
+    # ต่อ 3 attempt แทน — ยังกัน thundering-herd ได้แต่ไม่ทำให้ผู้ใช้รอเป็นนาทีต่อ step เดียว
     GEMINI_RETRY_LIMIT: int = 3
-    GEMINI_RETRY_DELAY: int = 60
+    GEMINI_RETRY_DELAY: int = 8
 
     # Tavily
     TAVILY_API_KEY: str = ""
+    TAVILY_MAX_RESULTS: int = 10
+    TAVILY_CONTENT_CHARS: int = 1200  # เนื้อหาต่อ 1 ผลลัพธ์ที่ส่งให้ Answer Writer
+    TAVILY_COUNTRY: str = "thailand"  # boost ผลลัพธ์จากไทย (ว่าง = ไม่เจาะจงประเทศ)
+
+    # Tavily Research API (async research task → poll → report + sources)
+    TAVILY_RESEARCH_MODEL: str = "mini"          # mini | pro | auto
+    TAVILY_RESEARCH_OUTPUT_LENGTH: str = "short"  # short | standard | long
+    TAVILY_RESEARCH_TIMEOUT: int = 180            # วินาที — เพดานเวลารอ poll ทั้งหมด
+    TAVILY_RESEARCH_POLL_INTERVAL: int = 3        # วินาที — เว้นช่วงระหว่าง poll แต่ละครั้ง
 
     # ThaiJo Research API
     THAIJO_API_URL: str = "https://www.tci-thaijo.org/api"
     THAIJO_MAX_RESULTS: int = 5
+
+    # PubMed (NCBI E-utilities) — ไม่บังคับ, เพิ่ม rate limit จาก 3 → 10 req/s
+    NCBI_API_KEY: str = ""
+    NCBI_EMAIL: str = ""
 
     # MinIO
     MINIO_ENDPOINT: str = "localhost"
@@ -50,6 +68,9 @@ class Settings(BaseSettings):
     # Obsidian Knowledge Vault
     OBSIDIAN_VAULT_PATH: str = str(Path(__file__).parent / "obsidian_knowledge")
     OBSIDIAN_DEFAULT_VAULT: str = "health_region_10"
+    # เพดานตัวอักษรของ context ที่โหลดเข้า Gemini — กัน ContextWindowExceededError
+    # (Gemini limit 1,048,576 tokens; ไทย ~1 token/char → 500k chars ปลอดภัย เหลือ headroom)
+    OBSIDIAN_MAX_CONTEXT_CHARS: int = 500000
     OBSIDIAN_ENABLED: bool = True
     OBSIDIAN_SEARCH_THRESHOLD: float = 0.1
     OBSIDIAN_RAW_PDF_PATH: str = "obsidian_raw_pdf"

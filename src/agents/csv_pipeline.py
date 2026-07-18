@@ -9,6 +9,7 @@ from crewai import Agent, Crew, LLM, Task
 
 from src.domains import Domain
 from src.history import append_history
+from src.agents.text_utils import dedupe_repeated_answer
 from src.agents.prompt_profile import (
     ANALYST_CORE_POLICY,
     CODE_GENERATOR_CORE_POLICY,
@@ -30,15 +31,24 @@ from src.tools.minio import (
 )
 
 def _keyword_select(prompt: str, combined_text: str, max_n: int) -> list[str]:
-    """Keyword-score CSV file lines and return top-N matches."""
+    """Keyword-score CSV file lines and return top-N matches.
+
+    ⚠️ ภาษาไทยไม่มีช่องว่างระหว่างคำ — tokenize คำถามด้วยช่องว่างตรง ๆ (แบบเดิม) ได้ token
+    เดียวยาวทั้งประโยค ไม่มีทางไป match กับ path สั้น ๆ ได้เลย (แถม regex \\w ของ Python
+    ไม่รวม combining vowel/tone mark ของไทยด้วย ทำให้ยิ่งพังกว่าเดิม) จึงกลับทิศทางการเช็ค:
+    ชื่อโฟลเดอร์/ไฟล์เป็นคำไทยที่สมบูรณ์อยู่แล้ว — ตัดด้วย separator ที่ไม่ใช่ตัวอักษร
+    (/ ( ) - ตัวเลข) แล้วเช็คว่าท่อนนั้นปรากฏใน "คำถามดิบ" หรือไม่ ทนต่อภาษาไทยแบบไม่มี
+    ช่องว่างได้ดีกว่ามาก เพราะชื่อโฟลเดอร์จริงมักปรากฏคำต่อคำในคำถามผู้ใช้ตรง ๆ
+    """
     lines = [ln.strip() for ln in combined_text.split("\n") if ln.strip() and "[ID:" in ln]
     if not lines:
         return []
-    words = set(re.sub(r"[^\w\s]", " ", prompt.lower()).split())
+    prompt_l = prompt.lower()
 
     def score(line: str) -> int:
         ll = line.lower()
-        return sum(1 for w in words if len(w) > 2 and w in ll)
+        segments = [s.strip() for s in re.split(r"[/()\-_,.\d]+", ll) if len(s.strip()) >= 3]
+        return sum(1 for seg in segments if seg in prompt_l)
 
     return sorted(lines, key=score, reverse=True)[:max_n]
 
@@ -114,7 +124,7 @@ def _run_agent(
         try:
             result = str(crew.kickoff()).strip()
             if result and result != "None":
-                return result
+                return dedupe_repeated_answer(result)
             if attempt < max_retries:
                 time.sleep(2)
         except Exception as exc:
@@ -186,34 +196,47 @@ def _verify_file_relevance(prompt: str, selected_lines: list[str], llm) -> bool:
         verbose=False,
         max_iter=2,
     )
-    result = _run_agent(
-        verifier,
-        (
-            f"คำถามผู้ใช้: {prompt}\n\n"
-            f"ชุดข้อมูลที่ระบบเลือกมา:\n{files_text}\n\n"
-            "ชุดข้อมูลข้างต้นเป็น 'หัวข้อ/โรค/ตัวชี้วัด/กลุ่มประชากร' เดียวกับคำถามหรือไม่?\n\n"
-            "⚠️ สำคัญมาก — ตัดสินจาก 'หัวข้อ' เท่านั้น และให้ค่าเริ่มต้นเอนไปทาง yes:\n"
-            "สิ่งต่อไปนี้ 'ไม่ใช่' เหตุให้ปฏิเสธ เพราะระบบจะจัดการในขั้นตอนประมวลผลถัดไป:\n"
-            "  • ปี / ช่วงปี ที่ระบุ (เช่น ถามปี 2567 ไฟล์ครอบคลุม 2565-2569 → ตรง)\n"
-            "  • จังหวัด / อำเภอ / พื้นที่ ที่ระบุ\n"
-            "  • ช่วงอายุ / เพศ / กลุ่มย่อย ที่ระบุ\n"
-            "  • การขอ 'แยกราย.../จำแนกตาม.../เฉพาะ.../แต่ละ...' (เช่น แยกรายอำเภอ "
-            "รายจังหวัด รายปี) — เป็นการแบ่งย่อยของหัวข้อเดิม ไม่ใช่คนละเรื่อง\n"
-            "  • คุณมองไม่เห็นคอลัมน์จริงในไฟล์ ห้ามเดาว่า 'ไฟล์อาจไม่มีระดับอำเภอ' "
-            "แล้วปฏิเสธ — ปล่อยให้ขั้นวิเคราะห์ตรวจเอง\n\n"
-            "เกณฑ์ตัดสิน:\n"
-            "- หัวข้อ/โรค/ตัวชี้วัดเดียวกัน → ตอบ yes (แม้คำถามจะเจาะจงปี/พื้นที่/อายุ "
-            "หรือขอแยกย่อยก็ตาม)\n"
-            "- ตอบ no 'เฉพาะ' เมื่อเป็นคนละเรื่องกันจริง ๆ เท่านั้น "
-            "(เช่น ถามพยาธิใบไม้ในตับ แต่ได้ข้อมูลเบาหวาน)\n\n"
-            "ตอบเพียงคำเดียว: yes หรือ no"
-        ),
-        "คำเดียว: yes หรือ no",
-    )
-    r = result.strip().lower()
-    if r.startswith("[agent error"):
-        return True  # LLM ล้ม → ไม่บล็อก ปล่อยให้ pipeline เดินต่อตามเดิม
-    return r.startswith("yes") or ("yes" in r and not r.startswith("no"))
+    def _ask_once() -> str:
+        return _run_agent(
+            verifier,
+            (
+                f"คำถามผู้ใช้: {prompt}\n\n"
+                f"ชุดข้อมูลที่ระบบเลือกมา:\n{files_text}\n\n"
+                "ชุดข้อมูลข้างต้นเป็น 'หัวข้อ/โรค/ตัวชี้วัด/กลุ่มประชากร' เดียวกับคำถามหรือไม่?\n\n"
+                "⚠️ สำคัญมาก — ตัดสินจาก 'หัวข้อ' เท่านั้น และให้ค่าเริ่มต้นเอนไปทาง yes:\n"
+                "สิ่งต่อไปนี้ 'ไม่ใช่' เหตุให้ปฏิเสธ เพราะระบบจะจัดการในขั้นตอนประมวลผลถัดไป:\n"
+                "  • ปี / ช่วงปี ที่ระบุ (เช่น ถามปี 2567 ไฟล์ครอบคลุม 2565-2569 → ตรง)\n"
+                "  • จังหวัด / อำเภอ / พื้นที่ ที่ระบุ\n"
+                "  • ช่วงอายุ / เพศ / กลุ่มย่อย ที่ระบุ\n"
+                "  • การขอ 'แยกราย.../จำแนกตาม.../เฉพาะ.../แต่ละ...' (เช่น แยกรายอำเภอ "
+                "รายจังหวัด รายปี) — เป็นการแบ่งย่อยของหัวข้อเดิม ไม่ใช่คนละเรื่อง\n"
+                "  • คำถามขอ 'นโยบาย/มาตรการ/แผนงาน' เกี่ยวกับโรคหนึ่ง ๆ — ข้อมูลสถิติ/ตัวชี้วัด "
+                "ของโรคนั้น (เช่น ร้อยละผู้ป่วยที่คุมได้, อัตราป่วยรายใหม่) คือ 'หลักฐานพื้นฐาน' "
+                "สำหรับเขียนนโยบายอยู่แล้ว ไม่ใช่คนละเรื่องกับนโยบาย\n"
+                "  • คุณมองไม่เห็นคอลัมน์จริงในไฟล์ ห้ามเดาว่า 'ไฟล์อาจไม่มีระดับอำเภอ' "
+                "แล้วปฏิเสธ — ปล่อยให้ขั้นวิเคราะห์ตรวจเอง\n\n"
+                "เกณฑ์ตัดสิน:\n"
+                "- หัวข้อ/โรค/ตัวชี้วัดเดียวกัน → ตอบ yes (แม้คำถามจะเจาะจงปี/พื้นที่/อายุ/นโยบาย "
+                "หรือขอแยกย่อยก็ตาม)\n"
+                "- ตอบ no 'เฉพาะ' เมื่อเป็นคนละเรื่องกันจริง ๆ เท่านั้น "
+                "(เช่น ถามพยาธิใบไม้ในตับ แต่ได้ข้อมูลเบาหวาน)\n\n"
+                "ตอบเพียงคำเดียว: yes หรือ no"
+            ),
+            "คำเดียว: yes หรือ no",
+        )
+
+    # ⚠️ การเรียก LLM ครั้งเดียวไม่ deterministic (temperature ไม่ได้ล็อกเป็น 0) —
+    # ตอบ "no" ผิดพลาดแค่ครั้งเดียวจะทิ้งข้อมูลทั้งโดเมนทันที ทั้งที่เกณฑ์ข้างต้นบอกไว้ชัดว่า
+    # "ให้ค่าเริ่มต้นเอนไปทาง yes" — ถามซ้ำสูงสุด 2 ครั้ง ผ่านถ้าครั้งใดครั้งหนึ่งตอบ yes
+    # (ลด false-reject ที่ทำให้ผู้ใช้เจอ "ไม่พบข้อมูล" ทั้งที่ไฟล์ตรงหัวข้ออยู่แล้ว)
+    for _attempt in range(2):
+        result = _ask_once()
+        r = result.strip().lower()
+        if r.startswith("[agent error"):
+            return True  # LLM ล้ม → ไม่บล็อก ปล่อยให้ pipeline เดินต่อตามเดิม
+        if r.startswith("yes") or ("yes" in r and not r.startswith("no")):
+            return True
+    return False
 
 
 def _no_data_message(prompt: str, domain_name: str) -> str:

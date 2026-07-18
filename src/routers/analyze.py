@@ -2,7 +2,9 @@
 import asyncio
 import json
 import os
+import re
 import threading
+import time
 from typing import Any
 
 # จำกัด 5 AI pipelines พร้อมกันต่อ worker (4 workers = 20 concurrent รวม)
@@ -22,6 +24,31 @@ from src.domains import DOMAINS as _DOMAINS
 
 
 router = APIRouter(tags=["analyze"])
+
+
+_URL_RE = re.compile(r"https?://[^\s)\]\"'<>]+")
+
+
+def _tavily_raw_to_articles_text(raw_data: str) -> str:
+    """แปลงผลดิบจาก Tavily Search Agent เป็นบล็อกแยกต่อ URL แบบเดียวกับ ThaiJo/PubMed
+    articles_text ("--- ... ที่ N ---") เพื่อให้ Report Generator อ้างอิงแยกทีละแหล่ง
+    แทนที่จะเห็น Tavily เป็น "แหล่งเดียว" แล้วอ้างอิงรวมเป็น 1 reference เท่านั้น
+    (เช่น "Tavily Research (2567)...") ทั้งที่ Tavily หาเจอ 10 แหล่งจริง
+
+    ⚠️ ตั้งใจใช้แค่ URL-extraction แบบกว้าง ๆ (ไม่ผูกกับโครงสร้างข้อความเฉพาะ) เพราะ
+    Search Agent (LLM) มักไม่ pass-through ผล tool ตรง ๆ เป็น task output ของตัวเอง —
+    บางครั้ง paraphrase ใหม่เป็น prose รูปแบบอื่น (เช่น "ชื่อ (URL: ...): สรุป") แบบไม่
+    แน่นอนในแต่ละครั้ง ลอง parse โครงสร้าง "N. Title\\n URL:\\n สรุป:" ตรง ๆ มาก่อนแล้ว
+    พบว่าพลาดบ่อยเพราะ Agent เปลี่ยนรูปแบบ — ดึงเฉพาะ URL (ทนทานต่อรูปแบบข้อความรอบข้าง
+    ทุกแบบ) มาสร้างบล็อกแยกต่อแหล่งแทน ไม่ต้องพึ่งการดึง title/summary แม่นยำ เพราะ
+    เนื้อหา/บริบทเต็มยังอยู่ใน Tavily Answer Writer narrative ที่แนบไปพร้อมกันอยู่แล้ว
+    (ดู tavily_result_holder['msg'] ตรงจุดที่เรียกใช้ฟังก์ชันนี้)
+    """
+    urls = list(dict.fromkeys(_URL_RE.findall(raw_data or "")))  # unique, keep order
+    if not urls:
+        return ""
+    lines = [f"--- แหล่งข้อมูลเว็บที่ {i} ---\nURL: {url}" for i, url in enumerate(urls, 1)]
+    return "\n\n".join(lines)
 
 
 def _orchestrate(
@@ -234,7 +261,11 @@ def _orchestrate(
                 obs_result = ex.submit(
                     run_obsidian_ask_fullcontext,
                     prompt,
-                    "",
+                    # ⚠️ ต้องตรวจจับจังหวัดจาก prompt เอง — run_obsidian_ask_fullcontext
+                    # ไม่ได้ "infer จากคำถามเอง" ตามที่คอมเมนต์เดิมเข้าใจผิด ถ้าส่ง ""
+                    # จะโหลดทั้ง vault (~1.1MB+) ทุกครั้ง เคยทำให้ Gemini context window
+                    # เกิน 1,048,576 token จนพังทั้ง request (ContextWindowExceededError)
+                    detect_province_from_prompt(prompt) or "",
                     "health_region_10",
                     history_context=history_context,
                 ).result()
@@ -321,6 +352,26 @@ def _orchestrate(
             def _worker_thaijo() -> None:
                 run_thaijo_pipeline(prompt=prompt, queue=_ThaijoQ(), loop=loop)
 
+            # ── PubMed worker — wrapper queue forwards all steps real-time ──────
+            pubmed_result: dict = {}
+
+            class _PubmedQ:
+                _FORWARD = {"agent_start", "agent_done"}
+                async def put(self, ev: Any) -> None:  # type: ignore[override]
+                    if not isinstance(ev, dict):
+                        return
+                    ev_type = ev.get("type", "")
+                    if ev_type == "final":
+                        pubmed_result["articles_text"] = ev.get("articlesText", "")
+                        pubmed_result["article_count"] = ev.get("articleCount", 0)
+                        pubmed_result["full_text"]     = ev.get("textResult", "")
+                    elif ev_type in self._FORWARD:
+                        await queue.put(ev)
+
+            def _worker_pubmed() -> None:
+                from src.agents.pubmed_agent import run_pubmed_pipeline
+                run_pubmed_pipeline(prompt=prompt, queue=_PubmedQ(), loop=loop)
+
             # ── Obsidian worker — 2 agent steps แสดง real-time ──────────────────
             obsidian_result: dict = {}
             def _worker_obsidian() -> None:
@@ -328,7 +379,9 @@ def _orchestrate(
                      "agentName": "Obsidian Knowledge Searcher"})
                 put({"type": "agent_start", "step": "obsidian_answer",
                      "agentName": "Health Knowledge Answer Writer"})
-                obs = run_obsidian_ask_fullcontext(prompt, "", "health_region_10")
+                # ⚠️ เหตุผลเดียวกับ obsidian mode ด้านบน — ต้องตรวจจับจังหวัดเอง
+                # ไม่งั้นโหลดทั้ง vault แล้วเสี่ยงชน Gemini context window limit
+                obs = run_obsidian_ask_fullcontext(prompt, detect_province_from_prompt(prompt) or "", "health_region_10")
                 note_titles = ", ".join(n.title for n in obs.notes_referenced[:3]) if obs.notes_referenced else "ไม่พบ notes"
                 put({"type": "agent_done", "step": "obsidian_search",
                      "agentName": "Obsidian Knowledge Searcher",
@@ -365,6 +418,14 @@ def _orchestrate(
                     ev_type = ev.get("type", "")
                     if ev_type == "final":
                         tavily_result_holder["msg"] = ev.get("message", "")
+                    elif ev_type == "agent_done" and ev.get("step") == "search":
+                        # ⚠️ เก็บผลดิบ (title/url/summary แยกรายการ) จาก Search Agent ไว้ด้วย —
+                        # ใช้จัดรูปแบบเป็น per-source block ให้ report generator อ้างอิงแยกทีละ
+                        # แหล่งได้ (เหมือน ThaiJo/PubMed) แทนที่จะเห็นแค่ narrative ก้อนเดียวจาก
+                        # Answer Writer ที่มักถูกอ้างอิงรวมเป็น 1 reference เท่านั้น — ดูคอมเมนต์
+                        # ที่ report_source_parts ด้านล่าง
+                        tavily_result_holder["raw_data"] = ev.get("result", "")
+                        await queue.put(ev)
                     elif ev_type in self._FORWARD:
                         await queue.put(ev)
 
@@ -443,19 +504,27 @@ def _orchestrate(
                     history_section=history_section, session_id="",
                 )
 
-            # ── รัน 4 worker พร้อมกัน (parallel) แล้วรอให้ครบทุกตัว ──────────────
+            # ── รัน 5 worker พร้อมกัน (parallel) แล้วรอให้ครบทุกตัว ──────────────
             # ⚠️ เดิมโค้ดจบแค่ตรงนี้ (return ทันที) — worker ทั้ง 4 ตัวข้างบนถูก
             # define ไว้แต่ไม่เคยถูกเรียกเลย ทำให้ "สร้างรายงาน" ไม่ทำอะไรเลย
             # ปิด stream ทันทีแบบไม่มี event ใด ๆ ส่งกลับ — ฝั่ง frontend เห็นเป็น
             # "กำลังประมวลผล" ค้างตลอดไป (ไม่มี final/result/error ให้ resolve)
             put({"type": "text_stream_start", "articleCount": 0})
-            with _cf.ThreadPoolExecutor(max_workers=4) as ex:
-                futures = {
-                    ex.submit(_worker_thaijo):   "thaijo",
-                    ex.submit(_worker_obsidian): "obsidian",
-                    ex.submit(_worker_stats):    "stats",
-                    ex.submit(_worker_tavily):   "tavily",
-                }
+            with _cf.ThreadPoolExecutor(max_workers=5) as ex:
+                # ⚠️ ทยอยเริ่มแต่ละ worker ห่างกัน ~1.5s แทนที่จะยิง LLM ทั้ง 5 ตัว
+                # พร้อมกันเป๊ะในวินาทีเดียว — ลดโอกาสชน 429 quota-per-minute
+                # (input token) ตอนมีหลาย request วิ่งพร้อมกันอยู่แล้ว โดยแทบไม่
+                # กระทบเวลารวม เพราะยังรันซ้อนกัน (concurrent) อยู่เหมือนเดิม
+                futures = {}
+                for worker, name in (
+                    (_worker_obsidian, "obsidian"),
+                    (_worker_stats, "stats"),
+                    (_worker_thaijo, "thaijo"),
+                    (_worker_tavily, "tavily"),
+                    (_worker_pubmed, "pubmed"),
+                ):
+                    futures[ex.submit(worker)] = name
+                    time.sleep(1.5)
                 for fut in _cf.as_completed(futures):
                     name = futures[fut]
                     try:
@@ -463,19 +532,21 @@ def _orchestrate(
                     except Exception as exc:
                         put({"type": "agent_done", "step": name, "agentName": name, "result": f"ผิดพลาด: {exc}"})
 
-            # ── รวมผลลัพธ์จากทั้ง 4 แหล่งเป็นรายงานเดียว ──────────────────────────
+            # ── รวมผลลัพธ์จากทั้ง 5 แหล่งเป็นรายงานเดียว ──────────────────────────
             sections = []
             if obsidian_result.get("content"):
                 sections.append(f"## คลังความรู้สุขภาพ เขต 10\n\n{obsidian_result['content']}")
             if stats_final_holder.get("msg"):
                 sections.append(f"## สถิติสาธารณสุข\n\n{stats_final_holder['msg']}")
             if thaijo_result.get("full_text"):
-                sections.append(f"## งานวิจัยที่เกี่ยวข้อง\n\n{thaijo_result['full_text']}")
+                sections.append(f"## งานวิจัยที่เกี่ยวข้อง (ThaiJo)\n\n{thaijo_result['full_text']}")
+            if pubmed_result.get("full_text"):
+                sections.append(f"## งานวิจัยทางการแพทย์ (PubMed)\n\n{pubmed_result['full_text']}")
             if tavily_result_holder.get("msg"):
                 sections.append(f"## ข้อมูลจากอินเทอร์เน็ต\n\n{tavily_result_holder['msg']}")
 
             combined_text = "\n\n---\n\n".join(sections) if sections else (
-                "ไม่พบข้อมูลที่เกี่ยวข้องจากแหล่งข้อมูลใดเลย (สถิติ/คลังความรู้/งานวิจัย/เว็บ) "
+                "ไม่พบข้อมูลที่เกี่ยวข้องจากแหล่งข้อมูลใดเลย (สถิติ/คลังความรู้/งานวิจัย/PubMed/เว็บ) "
                 "ลองระบุคำถามให้เจาะจงมากขึ้น เช่น ระบุจังหวัดหรือหัวข้อสุขภาพที่ต้องการ"
             )
 
@@ -485,12 +556,36 @@ def _orchestrate(
             if session_id:
                 append_history(session_id, "assistant", combined_text)
 
+            # ── รวม "วัตถุดิบ" สำหรับ report generator ────────────────────────────
+            # ⚠️ เดิม articlesText = เฉพาะบทความ ThaiJo → report generator มองไม่เห็น
+            # เนื้อหา+แหล่งอ้างอิงจาก Tavily Research เลย ทำให้ "อ้างอิงของ research
+            # ไม่ถูกนำไปทำอ้างอิงในรายงาน" — ต้องแนบเนื้อหา Tavily (ซึ่งมี "แหล่งอ้างอิง"
+            # ต่อท้ายอยู่แล้ว) เข้าไปด้วย เพื่อให้แหล่งอ้างอิงไหลต่อเข้ารายงานฉบับจริง
+            report_source_parts = []
+            if thaijo_result.get("articles_text"):
+                report_source_parts.append(thaijo_result["articles_text"])
+            if pubmed_result.get("articles_text"):
+                report_source_parts.append(
+                    "--- บทความวิจัยทางการแพทย์จาก PubMed ---\n"
+                    + pubmed_result["articles_text"]
+                )
+            if tavily_result_holder.get("msg"):
+                # ⚠️ ใช้บล็อกแยกต่อแหล่ง (จาก raw_data) แทน narrative ก้อนเดียว — ดูเหตุผล
+                # เต็มใน _tavily_raw_to_articles_text ด้านบน fallback เป็น narrative เดิม
+                # ถ้า parse ไม่ได้ (เช่น raw_data ว่าง/รูปแบบเปลี่ยน) กันไม่ให้ข้อมูลหาย
+                tavily_articles_text = _tavily_raw_to_articles_text(tavily_result_holder.get("raw_data", ""))
+                report_source_parts.append(
+                    "--- ข้อมูลค้นคว้าเพิ่มเติมจากอินเทอร์เน็ต (Tavily Research) ---\n"
+                    + (tavily_articles_text or tavily_result_holder["msg"])
+                )
+            combined_articles_text = "\n\n".join(report_source_parts)
+
             put({
                 "type": "final",
                 "message": combined_text,
                 "textResult": combined_text,
-                "articlesText": thaijo_result.get("articles_text", ""),
-                "articleCount": thaijo_result.get("article_count", 0),
+                "articlesText": combined_articles_text,
+                "articleCount": thaijo_result.get("article_count", 0) + pubmed_result.get("article_count", 0),
                 "reportTitle": report_title,
                 "agentSteps": [],
             })
@@ -532,7 +627,9 @@ def _orchestrate(
                 obs_result = ex.submit(
                     run_obsidian_ask_fullcontext,
                     prompt,
-                    "",   # province — let agent infer from question
+                    # ⚠️ เหตุผลเดียวกับ mode == "obsidian" ด้านบน — ตรวจจับจังหวัดเอง
+                    # ไม่งั้นโหลดทั้ง vault แล้วเสี่ยงชน Gemini context window limit
+                    detect_province_from_prompt(prompt) or "",
                     "health_region_10",
                     history_context=history_context,
                 ).result()

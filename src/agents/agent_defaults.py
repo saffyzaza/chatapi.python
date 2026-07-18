@@ -1,5 +1,6 @@
 """Centralized Agent defaults and 429/503-aware crew kickoff helper."""
 import logging
+import random
 import time
 import asyncio
 
@@ -42,12 +43,18 @@ def _patch_gemini_429_backoff() -> None:
     def _get_delay(agent_instance):
         base_delay = get_settings().GEMINI_RETRY_DELAY
         attempt = getattr(agent_instance, "_times_executed", 0)
-        delay = min(base_delay * (2 ** attempt), 300)
+        # ⚠️ cap ลดจาก 300s → 45s — 300s (5 นาที) ต่อ retry เดียวไม่เหมาะกับแชท
+        # interactive ที่ผู้ใช้รอผลอยู่หน้าจอ ดู GEMINI_RETRY_DELAY ใน config.py
+        delay = min(base_delay * (2 ** attempt), 45)
+        # ⚠️ Jitter กันหลาย request/worker คำนวณ delay ตรงกันเป๊ะแล้ว retry
+        # พร้อมกันเป็นชุด (thundering herd) — ยิ่งซ้ำเติม 429 quota-per-minute ให้
+        # เกินซ้ำไปอีกรอบ ทั้งที่ระบบตั้งใจจะ "หลบ" ช่วงโควตาตันอยู่แล้ว
+        jittered_delay = delay + random.uniform(0, delay * 0.5)
         logger.warning(
-            "429 RESOURCE_EXHAUSTED — sleeping %ds before retry (attempt %d)",
-            delay, attempt + 1,
+            "429 RESOURCE_EXHAUSTED — sleeping %.1fs before retry (attempt %d)",
+            jittered_delay, attempt + 1,
         )
-        return delay
+        return jittered_delay
 
     def _patched_handle(self, e, task, context, tools):
         err = str(e)
@@ -112,8 +119,11 @@ def kickoff_with_retry(crew, max_attempts: int = 3):
                         sleep_secs = min(30 * attempt, 90)
                     else:
                         sleep_secs = 5
+                    # ⚠️ Jitter เหตุผลเดียวกับใน _get_delay ด้านบน — กันหลาย
+                    # pipeline ที่โดน 429/503 พร้อมกันแล้ว retry ประสานเวลากันเป๊ะ
+                    sleep_secs += random.uniform(0, sleep_secs * 0.5)
                     logger.warning(
-                        "Retryable error on attempt %d/%d (%s) — sleeping %ds",
+                        "Retryable error on attempt %d/%d (%s) — sleeping %.1fs",
                         attempt, max_attempts, err[:80], sleep_secs,
                     )
                     time.sleep(sleep_secs)

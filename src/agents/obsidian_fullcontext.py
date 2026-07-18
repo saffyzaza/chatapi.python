@@ -1,7 +1,7 @@
 """Obsidian Full Context pipeline.
 
-โหลด .md ทั้งหมดจาก filesystem แล้วส่งตรงเข้า Gemini — ไม่ต้อง DB index.
-ถ้าระบุ province จะโหลดเฉพาะโฟลเดอร์ province นั้น (~100-200 KB แทนที่ 1.1 MB)
+โหลด note ทั้งหมดจากตาราง obsidian_notes (PostgreSQL) แล้วส่งตรงเข้า Gemini.
+ถ้าระบุ province จะโหลดเฉพาะ note ของ province นั้น (~100-200 KB แทนที่ 1.1 MB)
 """
 import logging
 import os
@@ -10,7 +10,9 @@ import time
 from pathlib import Path
 
 from src.config import get_settings
+from src.db.pool import query_db
 from src.agents.progress import emit_progress
+from src.agents.text_utils import dedupe_repeated_answer
 from src.schemas.obsidian import ObsidianAskResponse, ObsidianNoteRef
 
 logger = logging.getLogger(__name__)
@@ -48,68 +50,85 @@ SYSTEM_PROMPT = """คุณคือผู้เชี่ยวชาญด้�
 """
 
 
-# ── File loader ────────────────────────────────────────────────────────────────
+# ── DB loader ──────────────────────────────────────────────────────────────────
 
-def _extract_minio_id(content: str) -> str | None:
-    """ดึง MinIO ID จาก **MinIO ID:** `290641` pattern ที่ ingest เขียนไว้ใน INDEX.md."""
-    m = re.search(r'\*\*MinIO ID:\*\*\s*`([^`]+)`', content)
-    return m.group(1).strip() if m else None
+def _relevance_score(content: str, path: str, keywords: list[str]) -> int:
+    """นับจำนวนคีย์เวิร์ดจากคำถามที่ปรากฏใน note (นับใน path ด้วย × น้ำหนัก)"""
+    if not keywords:
+        return 0
+    lc = content.lower()
+    lp = path.lower()
+    return sum(lc.count(k) + lp.count(k) * 5 for k in keywords)
 
 
-def _load_vault_context(vault_path: str, province: str | None) -> tuple[str, list[str], dict[str, str]]:
-    """อ่าน .md ทั้งหมดจาก vault หรือกรองตาม province.
+def _load_vault_context(
+    vault_id: str,
+    province: str | None,
+    question: str = "",
+    max_chars: int | None = None,
+) -> tuple[str, list[str], dict[str, str]]:
+    """โหลด note จาก obsidian_notes (กรองตาม province) แบบ "เลือกที่เกี่ยวข้องที่สุด
+    ให้พอดีกับเพดาน context" — กัน Gemini ContextWindowExceededError เมื่อ vault
+    โตขึ้นจากการ ingest PDF จนแม้แต่จังหวัดเดียวก็เกิน 1M tokens
 
     Returns:
-        (context_text, relative_file_paths, minio_id_map{rel_path: minio_id})
-        minio_id_map: ทุกไฟล์ใน folder เดียวกับ INDEX จะได้ minio_id เดียวกัน
+        (context_text, relative_file_paths, minio_id_map{rel_path: file_id})
     """
-    root = Path(vault_path)
-    if not root.exists():
-        raise FileNotFoundError(f"Vault path not found: {vault_path}")
+    if max_chars is None:
+        max_chars = get_settings().OBSIDIAN_MAX_CONTEXT_CHARS
 
-    if province:
-        province_dir = root / province
-        if province_dir.exists():
-            search_root = province_dir
-        else:
-            matches = [d for d in root.iterdir() if d.is_dir() and province in d.name]
-            search_root = matches[0] if matches else root
-            if search_root == root:
-                logger.warning("[fullctx] ไม่พบโฟลเดอร์ '%s' — โหลดทั้ง vault", province)
-    else:
-        search_root = root
+    rows = query_db(
+        "SELECT relative_path, content, file_id FROM obsidian_notes "
+        "WHERE vault_id = %s AND province = %s ORDER BY relative_path",
+        (vault_id, province),
+    ) if province else []
 
-    md_files = sorted(search_root.rglob("*.md"))
-    logger.info("[fullctx] โหลด %d ไฟล์ จาก %s", len(md_files), search_root)
+    if province and not rows:
+        logger.warning("[fullctx] ไม่พบ note ของ '%s' — โหลดทั้ง vault", province)
+
+    if not rows:
+        rows = query_db(
+            "SELECT relative_path, content, file_id FROM obsidian_notes "
+            "WHERE vault_id = %s ORDER BY relative_path",
+            (vault_id,),
+        )
+
+    # คีย์เวิร์ดจากคำถาม (ตัดคำสั้น/คำทั่วไปทิ้ง) ใช้จัดอันดับความเกี่ยวข้อง
+    keywords = [w.lower() for w in re.split(r"\s+", question) if len(w) >= 3]
+
+    # ให้คะแนนแล้วเรียงจากเกี่ยวข้องมากไปน้อย — โน้ตที่ตรงคำถามจะได้เข้าก่อน
+    # ถ้าถึงเพดานตัวอักษรก่อนจะตัดโน้ตที่เหลือ (เกี่ยวข้องน้อยกว่า) ออก
+    scored = sorted(
+        rows,
+        key=lambda r: _relevance_score(r["content"] or "", r["relative_path"], keywords),
+        reverse=True,
+    )
 
     parts: list[str] = []
     file_paths: list[str] = []
-    # dir (relative) → minio_id  (extracted from INDEX.md in that dir)
-    dir_minio_map: dict[str, str] = {}
-    raw_contents: dict[str, str] = {}
-
-    for f in md_files:
-        try:
-            content = f.read_text(encoding="utf-8", errors="replace").strip()
-            if not content:
-                continue
-            rel = str(f.relative_to(root)).replace("\\", "/")
-            raw_contents[rel] = content
-            minio_id = _extract_minio_id(content)
-            if minio_id:
-                dir_key = str(f.parent.relative_to(root)).replace("\\", "/")
-                dir_minio_map[dir_key] = minio_id
-            parts.append(f"\n\n---\n## FILE: {rel}\n\n{content}")
-            file_paths.append(rel)
-        except Exception as exc:
-            logger.warning("[fullctx] ข้าม %s: %s", f.name, exc)
-
-    # Map every file to its folder's minio_id
     minio_id_map: dict[str, str] = {}
-    for rel in file_paths:
-        dir_key = str(Path(rel).parent).replace("\\", "/")
-        if dir_key in dir_minio_map:
-            minio_id_map[rel] = dir_minio_map[dir_key]
+    total = 0
+    included = 0
+
+    for r in scored:
+        content = (r["content"] or "").strip()
+        if not content:
+            continue
+        rel = r["relative_path"]
+        block = f"\n\n---\n## FILE: {rel}\n\n{content}"
+        if total + len(block) > max_chars and included > 0:
+            break  # เต็มเพดานแล้ว (แต่ต้องมีอย่างน้อย 1 โน้ตเสมอ)
+        parts.append(block)
+        file_paths.append(rel)
+        if r.get("file_id"):
+            minio_id_map[rel] = r["file_id"]
+        total += len(block)
+        included += 1
+
+    logger.info(
+        "[fullctx] โหลด %d/%d notes (%d chars, cap=%d, vault=%s, province=%s)",
+        included, len(rows), total, max_chars, vault_id, province,
+    )
 
     return "\n".join(parts), file_paths, minio_id_map
 
@@ -169,7 +188,9 @@ def run_obsidian_ask_fullcontext(
                   f"กำลังโหลดเอกสาร{f' จังหวัด{province}' if province else 'ทั้ง vault'}...")
 
     try:
-        context_text, file_paths, minio_id_map = _load_vault_context(s.OBSIDIAN_VAULT_PATH, province or None)
+        context_text, file_paths, minio_id_map = _load_vault_context(
+            vault_id, province or None, question=question
+        )
 
         load_elapsed = round(time.time() - start, 1)
         emit_progress(request_id, "📂 Context Loader", "done",
@@ -194,7 +215,7 @@ def run_obsidian_ask_fullcontext(
             "ตามแนวทางในคำสั่งระบบ — ต่อยอดจากที่เคยตอบไปแล้ว ไม่ใช่เริ่มอธิบายใหม่ทั้งหมด)"
         )
 
-        answer = _call_gemini(SYSTEM_PROMPT, user_message, s)
+        answer = dedupe_repeated_answer(_call_gemini(SYSTEM_PROMPT, user_message, s))
 
         elapsed = round(time.time() - start, 1)
         emit_progress(request_id, "🤖 Gemini Answer Writer", "done",

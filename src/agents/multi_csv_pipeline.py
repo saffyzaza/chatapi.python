@@ -153,10 +153,18 @@ def _enforce_domain_coverage(
     fallback นี้ "เคารพขอบเขตโดเมน" สอดคล้องกับกลไกใหม่ด้านบน แล้วค่อย widen ออกไป
     เป็นทางเลือกสุดท้ายจริง ๆ เมื่อ path index ไม่มีข้อมูลของสาขานั้นเลย
 
-    If at MAX_FILES capacity, replaces the last-added (lowest-priority) file.
+    If at MAX_FILES capacity, replaces the last-added (lowest-priority) file —
+    unless that slot was itself just force-injected to cover an earlier domain
+    in this same call (see `forced` below).
     """
     result = list(selected_files)
     path_index = _load_path_index()
+
+    # ⚠️ index ที่เพิ่งถูก "บังคับแทรก" เพื่อ cover โดเมนหนึ่งในลูปนี้ — ห้ามให้โดเมน
+    # ถัดไปมา overwrite index เดียวกันซ้ำ (บั๊กเดิม: ทุกโดเมนที่ต้อง force-inject ตอนเต็ม
+    # cap จะเขียนทับ result[-1] ตัวเดียวกันหมด ทำให้โดเมนที่เพิ่งถูกแทรกไปหมาด ๆ
+    # โดนโดเมนถัดไปเบียดออกอีกที สุดท้ายโดเมนแรก ๆ ที่ควรถูก cover กลับไม่ถูก cover จริง)
+    forced: set[int] = set()
 
     for domain in domains:
         prefix = domain.folder_prefix
@@ -183,9 +191,21 @@ def _enforce_domain_coverage(
             fid = resolve_file_id(candidate)
             if fid and not any(f == fid for f, _ in result):
                 if len(result) >= MAX_FILES:
-                    result[-1] = (fid, candidate)   # replace last-added entry
+                    # หา slot ที่ยังไม่ถูกจองไว้จากการ force-inject โดเมนอื่นในลูปนี้
+                    evict_idx = next(
+                        (i for i in range(len(result) - 1, -1, -1) if i not in forced), None
+                    )
+                    if evict_idx is None:
+                        # ทุก slot ถูกจองหมด (ทุกโดเมนต้อง force-inject) — ยอม overflow
+                        # เกิน MAX_FILES เล็กน้อย ดีกว่าเบียดโดเมนที่เพิ่ง cover ไปออก
+                        result.append((fid, candidate))
+                        forced.add(len(result) - 1)
+                    else:
+                        result[evict_idx] = (fid, candidate)
+                        forced.add(evict_idx)
                 else:
                     result.append((fid, candidate))
+                    forced.add(len(result) - 1)
                 break
 
     return result
@@ -193,16 +213,30 @@ def _enforce_domain_coverage(
 
 # ── Generic helpers ────────────────────────────────────────────────────────────
 
+def _line_keyword_overlap(prompt_l: str, line: str) -> int:
+    """นับจำนวน "ท่อนคำ" ที่ตัดจากบรรทัด CSV line ที่ปรากฏเป็น substring ในคำถามดิบ.
+
+    ⚠️ ภาษาไทยไม่มีช่องว่างระหว่างคำ — tokenize คำถามด้วย \\s ตรง ๆ (แบบเดิม) ได้ token
+    เดียวยาวทั้งประโยค ไม่มีทางไป match กับ path สั้น ๆ ได้เลย จึงต้องกลับทิศทางการเช็ค:
+    ชื่อโฟลเดอร์/ไฟล์เป็นคำไทยที่สมบูรณ์อยู่แล้ว (ไม่ต้อง tokenize) — ตัดด้วย separator
+    ที่ไม่ใช่ตัวอักษร (/ ( ) - ตัวเลข) แล้วเช็คว่าท่อนนั้นปรากฏใน "คำถามดิบ" หรือไม่ ซึ่ง
+    ทนต่อภาษาไทยแบบไม่มีช่องว่างได้ดีกว่ามาก เพราะชื่อโฟลเดอร์จริงมักปรากฏคำต่อคำใน
+    คำถามผู้ใช้ตรง ๆ (เช่น "โรคเบาหวาน" เป็น substring ของ "นโยบาย...โรคเบาหวานใน...")
+    """
+    ll = line.lower()
+    segments = [s.strip() for s in re.split(r"[/()\-_,.\d]+", ll) if len(s.strip()) >= 3]
+    return sum(1 for seg in segments if seg in prompt_l)
+
+
 def _keyword_select(prompt: str, combined_text: str, max_n: int) -> list[str]:
     lines = [ln.strip() for ln in combined_text.split("\n") if ln.strip() and "[ID:" in ln]
     if not lines:
         return []
-    words = set(re.sub(r"[^\w\s]", " ", prompt.lower()).split())
+    prompt_l = prompt.lower()
     target_ages = _extract_age_ranges(prompt)
 
     def score(line: str) -> int:
-        ll = line.lower()
-        base = sum(1 for w in words if len(w) > 2 and w in ll)
+        base = _line_keyword_overlap(prompt_l, line)
 
         if not target_ages:
             return base
@@ -477,8 +511,22 @@ def run_multi_pipeline(
 
     selected_files = _resolve_folders_to_files(chosen_names, path_index, MAX_FILES)
 
-    # Fallback: folder navigation ล้มเหลว (agent error / ไม่มี path metadata) →
-    # กลับไปใช้ flat keyword scoring แบบเดิมกันพัง
+    # ── Sanity check: navigator อาจเลือกไฟล์ผิด domain ทั้งหมด ──────────────────
+    # ⚠️ Folder Navigator (LLM) บางครั้ง "หลุด" เลือกไฟล์จากโดเมนแรกในลิสต์ทั้งหมด (เช่น
+    # เลือกไฟล์สุขภาพจิตทั้ง 5 ไฟล์ให้คำถามเรื่องเบาหวานล้วน ๆ แม้ tree มีโฟลเดอร์เบาหวาน
+    # โชว์ชัดเจน) — ไฟล์ทุกตัว resolve เป็น file_id ได้จริง จึงไม่เข้าเงื่อนไข fallback
+    # ด้านล่างที่เช็คแค่ len < 2 เช็คเพิ่มว่าไฟล์ที่เลือกมามี "คำสำคัญร่วม" กับคำถามจริงไหม
+    # (ด้วย _line_keyword_overlap ตัวเดียวกับที่ _keyword_select ใช้ — แก้ bug ทิศทางการ
+    # match ของภาษาไทยไม่มีช่องว่างไปแล้ว ดูคอมเมนต์ใน _line_keyword_overlap) ถ้าไม่มี
+    # สักไฟล์เลยที่ overlap ให้ถือว่า navigation ล้มเหลว บังคับ fallback ด้านล่างทำงานแทน
+    prompt_l = prompt.lower()
+    if selected_files and not any(
+        _line_keyword_overlap(prompt_l, line) > 0 for _, line in selected_files
+    ):
+        selected_files = []
+
+    # Fallback: folder navigation ล้มเหลว (agent error / ไม่มี path metadata / เลือกผิด
+    # domain ทั้งหมด) → กลับไปใช้ flat keyword scoring แบบเดิมกันพัง
     if len(selected_files) < 2:
         all_text = list_csv_files_impl("")
         selected_lines = _keyword_select(prompt, all_text, MAX_FILES)
@@ -487,12 +535,17 @@ def run_multi_pipeline(
             if fid and not any(f == fid for f, _ in selected_files):
                 selected_files.append((fid, line))
 
-    # ── STEP 1b: Domain Coverage Validator ───────────────────────────────────
-    selected_files = _enforce_domain_coverage(selected_files, domains, prompt)
-
     # ── Relevance gate: ไฟล์ที่เลือกตรงหัวข้อคำถามไหม ───────────────────────
-    # _keyword_select + _enforce_domain_coverage คืน/บังคับไฟล์เสมอ (แม้ไม่มีคำตรง)
-    # → ต้องกัน CSV มั่ว ๆ มาตอบ ถ้าไม่ตรงให้แจ้ง "ไม่พบข้อมูล + แจ้ง admin"
+    # _keyword_select คืนไฟล์เสมอ (แม้ไม่มีคำตรง) → ต้องกัน CSV มั่ว ๆ มาตอบ ถ้าไม่ตรง
+    # ให้แจ้ง "ไม่พบข้อมูล + แจ้ง admin"
+    # ⚠️ ต้องเช็คจาก selected_files "ก่อน" ผ่าน Domain Coverage Validator ด้านล่างเสมอ —
+    # ขั้นตอนนั้นตั้งใจ "แทรกไฟล์จากโดเมนอื่นที่ผู้ใช้ไม่ได้ถามถึง" เพื่อ broaden รายงาน
+    # multi-domain (เช่น สร้างรายงานเรื่องเบาหวาน แต่ระบบบังคับให้มีไฟล์สุขภาพจิต +
+    # โภชนาการติดมาด้วยเสมอ) ถ้าเอาไฟล์ที่ถูก "แทรกเพื่อ broaden" มารวมเช็ค relevance
+    # ด้วย จะกลายเป็นถามว่า "ไฟล์เบาหวาน + ไฟล์สุขภาพจิต + ไฟล์โภชนาการ ตรงกับคำถามเรื่อง
+    # เบาหวานไหม" ซึ่ง LLM ตอบ no ถูกต้องแล้ว (เพราะ 2 ใน 3 ไม่เกี่ยวจริง ๆ) ทั้งที่ไฟล์
+    # เบาหวานที่ folder navigator เลือกมาแต่แรกนั้นตรงหัวข้อสมบูรณ์แบบอยู่แล้ว —
+    # เคยทำให้ "สร้างรายงาน" ตอบ "ไม่พบข้อมูล" ทั้งที่ในฐานข้อมูลมีไฟล์ตรงหัวข้ออยู่จริง
     # ⚠️ รันเฉพาะคำถามแรก (ไม่มี history) — ดูเหตุผลเต็มใน csv_pipeline.run_pipeline
     # (verifier ดูชื่อไฟล์ล้วน → ไวต่อความเจาะจงของ follow-up จนปฏิเสธไฟล์ที่หัวข้อตรง)
     from src.agents.csv_pipeline import _verify_file_relevance, _no_data_message
@@ -521,6 +574,10 @@ def run_multi_pipeline(
             ],
         })
         return
+
+    # ── STEP 1b: Domain Coverage Validator ───────────────────────────────────
+    # รันหลัง relevance gate เสมอ — ดูเหตุผลในคอมเมนต์เหนือ relevance gate ด้านบน
+    selected_files = _enforce_domain_coverage(selected_files, domains, prompt)
 
     file_summary = "\n".join(f"  • {line}" for _, line in selected_files)
     put({
