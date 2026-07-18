@@ -659,6 +659,22 @@ def _do_ingest(
                 time.sleep(wait_time)
         log("✅ อัปโหลดไฟล์ให้ AI สำเร็จ (หลีกเลี่ยงปัญหาฟอนต์ภาษาไทยของ PDF)")
 
+        # ไฟล์ใหญ่ (เช่น PDF ~100MB) ต้องรอ Gemini ประมวลผลไฟล์ก่อน (state: PROCESSING → ACTIVE)
+        # ไม่งั้นเรียก generate_content ทันทีจะได้ 400 INVALID_ARGUMENT ทุก chunk พร้อมกัน
+        log("⏳ กำลังรอ AI ประมวลผลไฟล์...")
+        wait_elapsed = 0
+        poll_interval = 3
+        max_wait = 300
+        while uploaded_file.state.name == "PROCESSING":
+            if wait_elapsed >= max_wait:
+                raise RuntimeError(f"AI ประมวลผลไฟล์ไม่เสร็จภายใน {max_wait} วินาที")
+            time.sleep(poll_interval)
+            wait_elapsed += poll_interval
+            uploaded_file = gemini_client.files.get(name=uploaded_file.name)
+        if uploaded_file.state.name == "FAILED":
+            raise RuntimeError(f"AI ประมวลผลไฟล์ล้มเหลว: {uploaded_file.error}")
+        log(f"✅ ไฟล์พร้อมใช้งาน (state: {uploaded_file.state.name})")
+
         sample_text = "\n\n".join(pages[:min(5, total_pages)])
 
         run_ai_name = not override_folder_name

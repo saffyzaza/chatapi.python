@@ -51,6 +51,49 @@ def _tavily_raw_to_articles_text(raw_data: str) -> str:
     return "\n\n".join(lines)
 
 
+def _brief(text: str, limit: int = 150) -> str:
+    text = re.sub(r"\s+", " ", (text or "").strip())
+    return text[:limit] + ("…" if len(text) > limit else "")
+
+
+def _thaijo_short_list(articles_text: str) -> list[str]:
+    """แยก articles_text ของ ThaiJo (บล็อก "--- บทความที่ N ---\\nReference:\\nSummary:\\nURL:")
+    เป็นรายการสั้น (ชื่อเรื่อง + ผู้แต่ง/อ้างอิง + URL + สรุปย่อ) สำหรับโชว์ฝั่งซ้าย — เนื้อหา
+    เต็มอยู่ฝั่งขวา ("ข้อมูลพื้นฐาน") แล้ว ไม่ต้องซ้ำเนื้อหาเดิมทั้งก้อนอีกรอบ
+    """
+    items: list[str] = []
+    for m in re.finditer(
+        r"---\s*บทความที่\s*\d+\s*---\s*\nReference:\s*(.*?)\nSummary:\s*(.*?)\nURL:\s*(.*?)(?=\n---|\Z)",
+        articles_text or "", re.DOTALL,
+    ):
+        reference, summary, url = (g.strip() for g in m.groups())
+        title_match = re.match(r"\*\*(.+?)\*\*\s*\n*(.*)", summary, re.DOTALL)
+        if title_match:
+            title, body = title_match.group(1).strip(), title_match.group(2)
+        else:
+            title, body = (reference[:100] or "(ไม่มีชื่อ)"), summary
+        items.append(f"- **{title}**\n  ผู้แต่ง/อ้างอิง: {reference}\n  {url}\n  {_brief(body)}")
+    return items
+
+
+def _pubmed_short_list(articles_text: str) -> list[str]:
+    """แยก articles_text ของ PubMed (บล็อก Title:/Authors:/Journal:/PMID:/URL:/Abstract:)
+    เป็นรายการสั้นแบบเดียวกับ ThaiJo — ดูคอมเมนต์ที่ _thaijo_short_list ด้านบน"""
+    items: list[str] = []
+    for m in re.finditer(
+        r"---\s*บทความที่\s*\d+\s*---\s*\nTitle:\s*(.*?)\nAuthors:\s*(.*?)\nJournal:\s*(.*?)\nPMID:\s*(.*?)\nURL:\s*(.*?)\nAbstract:\s*(.*?)(?=\n---|\Z)",
+        articles_text or "", re.DOTALL,
+    ):
+        title, authors, journal, pmid, url, abstract = (g.strip() for g in m.groups())
+        author_line = authors if authors and authors != "-" else "ไม่ระบุผู้แต่ง"
+        if journal and journal != "-":
+            author_line += f" — {journal}"
+        if pmid and pmid != "-":
+            author_line += f" (PMID: {pmid})"
+        items.append(f"- **{title}**\n  {author_line}\n  {url}\n  {_brief(abstract)}")
+    return items
+
+
 def _orchestrate(
     prompt: str,
     queue: asyncio.Queue,
@@ -250,6 +293,124 @@ def _orchestrate(
                 session_id=session_id, history_section=history_section,
                 reasoning=reasoning,
             )
+            return
+
+        # ── Research mode: ThaiJo + PubMed พร้อมกัน (ปุ่ม "วิจัย" เลือกทั้ง 2 แหล่ง) ────
+        # ⚠️ ปุ่ม "วิจัย" ในหน้าเว็บตอนนี้มี sub-option ให้เลือก ThaiJo/PubMed แยกกันได้ —
+        # ถ้าเลือกทั้งคู่ (ค่าเริ่มต้น) ให้รันสองไปป์ไลน์พร้อมกันแล้วรวมผล ถ้าเลือกแค่ตัวเดียว
+        # frontend จะส่ง mode="thaijo" หรือ mode="pubmed" ตรง ๆ แทน (ดู getEffectiveMode
+        # ใน ChatInput.tsx) — โหมดนี้จึงรองรับเฉพาะกรณี "เลือกทั้งสอง" เท่านั้น
+        if mode == "research":
+            import concurrent.futures as _cf
+            from src.agents.pubmed_agent import run_pubmed_pipeline
+
+            thaijo_result: dict = {}
+
+            class _ThaijoResearchQ:
+                _FORWARD = {"agent_start", "agent_done", "crew_plan"}
+                async def put(self, ev: Any) -> None:  # type: ignore[override]
+                    if not isinstance(ev, dict):
+                        return
+                    ev_type = ev.get("type", "")
+                    if ev_type == "final":
+                        thaijo_result["articles_text"] = ev.get("articlesText", "")
+                        thaijo_result["article_count"] = ev.get("articleCount", 0)
+                        thaijo_result["full_text"] = ev.get("textResult", "")
+                    elif ev_type in self._FORWARD:
+                        await queue.put(ev)
+
+            pubmed_result: dict = {}
+
+            class _PubmedResearchQ:
+                _FORWARD = {"agent_start", "agent_done"}
+                async def put(self, ev: Any) -> None:  # type: ignore[override]
+                    if not isinstance(ev, dict):
+                        return
+                    ev_type = ev.get("type", "")
+                    if ev_type == "final":
+                        pubmed_result["articles_text"] = ev.get("articlesText", "")
+                        pubmed_result["article_count"] = ev.get("articleCount", 0)
+                        pubmed_result["full_text"] = ev.get("textResult", "")
+                    elif ev_type in self._FORWARD:
+                        await queue.put(ev)
+
+            def _worker_research_thaijo() -> None:
+                run_thaijo_pipeline(
+                    prompt=prompt, queue=_ThaijoResearchQ(), loop=loop,
+                    history_context=history_context,
+                )
+
+            def _worker_research_pubmed() -> None:
+                run_pubmed_pipeline(
+                    prompt=prompt, queue=_PubmedResearchQ(), loop=loop,
+                    history_context=history_context,
+                )
+
+            put({"type": "text_stream_start", "articleCount": 0})
+            with _cf.ThreadPoolExecutor(max_workers=2) as ex:
+                futures = {
+                    ex.submit(_worker_research_thaijo): "thaijo",
+                    ex.submit(_worker_research_pubmed): "pubmed",
+                }
+                for fut in _cf.as_completed(futures):
+                    name = futures[fut]
+                    try:
+                        fut.result()
+                    except Exception as exc:
+                        put({"type": "agent_done", "step": name, "agentName": name, "result": f"ผิดพลาด: {exc}"})
+
+            sections = []
+            if thaijo_result.get("full_text"):
+                sections.append(f"## งานวิจัยที่เกี่ยวข้อง (ThaiJo)\n\n{thaijo_result['full_text']}")
+            if pubmed_result.get("full_text"):
+                sections.append(f"## งานวิจัยทางการแพทย์ (PubMed)\n\n{pubmed_result['full_text']}")
+            combined_text = "\n\n---\n\n".join(sections) if sections else (
+                "ไม่พบบทความที่เกี่ยวข้องทั้งจาก ThaiJo และ PubMed ลองปรับคำถามให้เจาะจงมากขึ้น"
+            )
+
+            for i in range(0, len(combined_text), 400):
+                put({"type": "text_chunk", "text": combined_text[i:i + 400]})
+
+            if session_id:
+                append_history(session_id, "assistant", combined_text)
+
+            report_source_parts = []
+            if thaijo_result.get("articles_text"):
+                report_source_parts.append(thaijo_result["articles_text"])
+            if pubmed_result.get("articles_text"):
+                report_source_parts.append(
+                    "--- บทความวิจัยทางการแพทย์จาก PubMed ---\n" + pubmed_result["articles_text"]
+                )
+            combined_articles_text = "\n\n".join(report_source_parts)
+
+            # ⚠️ "message" คือข้อความที่ไปโผล่ฝั่งซ้าย (แชท) — เนื้อหาเต็มอยู่ฝั่งขวาแล้ว
+            # (สตรีมผ่าน text_chunk ไปเป็น "ข้อมูลพื้นฐาน") เดิมใช้ combined_text ตรง ๆ
+            # ทำให้ทั้งสองฝั่งซ้ำเนื้อหาเดียวกันทั้งก้อน — สร้างรายการสั้น (ชื่อเรื่อง/
+            # ผู้แต่ง/URL/สรุปย่อ ต่อบทความ) แทน ไม่ต้องพึ่งเนื้อหาเต็มซ้ำ
+            thaijo_list = _thaijo_short_list(thaijo_result.get("articles_text", ""))
+            pubmed_list = _pubmed_short_list(pubmed_result.get("articles_text", ""))
+            total_count = len(thaijo_list) + len(pubmed_list)
+
+            summary_parts = [f'พบ {total_count} บทความที่เกี่ยวข้องกับ "{prompt}"']
+            if thaijo_list:
+                summary_parts.append(f"**ThaiJo ({len(thaijo_list)} บทความ)**\n" + "\n".join(thaijo_list))
+            if pubmed_list:
+                summary_parts.append(f"**PubMed ({len(pubmed_list)} บทความ)**\n" + "\n".join(pubmed_list))
+            if total_count == 0:
+                summary_parts = ["ไม่พบบทความที่เกี่ยวข้องทั้งจาก ThaiJo และ PubMed ลองปรับคำถามให้เจาะจงมากขึ้น"]
+            else:
+                summary_parts.append('ดูเนื้อหาเต็มได้ที่ช่อง "ข้อมูลพื้นฐาน" ด้านขวา →')
+            short_message = "\n\n".join(summary_parts)
+
+            put({
+                "type": "final",
+                "message": short_message,
+                "textResult": combined_text,
+                "articlesText": combined_articles_text,
+                "articleCount": thaijo_result.get("article_count", 0) + pubmed_result.get("article_count", 0),
+                "reportTitle": prompt,
+                "agentSteps": [],
+            })
             return
 
         # ── Obsidian mode: forced Knowledge Vault routing ─────────────────────

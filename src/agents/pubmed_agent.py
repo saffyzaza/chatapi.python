@@ -18,7 +18,6 @@ SSE events → queue:
    "reportTitle": "...", "articleCount": N, "agentSteps": [...]}
 """
 import asyncio
-import json
 import os
 import re
 import xml.etree.ElementTree as ET
@@ -79,6 +78,28 @@ def _pmc_id(article: ET.Element) -> str | None:
     return None
 
 
+def _authors_text(article: ET.Element) -> str:
+    """รวมรายชื่อผู้แต่งจาก <AuthorList> เป็น "ชื่อ นามสกุล, ชื่อ นามสกุล, ..." —
+    ถ้าเกิน 6 คน ตัดเหลือ 6 คนแรก + "et al." ตามธรรมเนียมการอ้างอิงทั่วไป"""
+    names: list[str] = []
+    for author in article.findall(".//Article/AuthorList/Author"):
+        last = author.findtext("LastName")
+        fore = author.findtext("ForeName") or author.findtext("Initials")
+        if last and fore:
+            names.append(f"{fore} {last}")
+        elif last:
+            names.append(last)
+        else:
+            collective = author.findtext("CollectiveName")
+            if collective:
+                names.append(collective)
+    if not names:
+        return ""
+    if len(names) > 6:
+        return ", ".join(names[:6]) + ", et al."
+    return ", ".join(names)
+
+
 def _text_of(article: ET.Element, path: str) -> str | None:
     node = article.find(path)
     return "".join(node.itertext()).strip() if node is not None else None
@@ -101,6 +122,7 @@ def _fetch_details(pmids: list[str], api_key: str | None, email: str | None) -> 
             "pmid": pmid,
             "pmcid": pmcid,
             "title": _text_of(article, ".//Article/ArticleTitle"),
+            "authors": _authors_text(article),
             "journal": _text_of(article, ".//Article/Journal/Title"),
             "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else None,
             "abstract": _abstract_text(article),
@@ -115,14 +137,36 @@ def search_pubmed(term: str, retmax: int, api_key: str | None = None, email: str
     return _fetch_details(pmids, api_key, email)
 
 
-def search_pubmed_progressive(
-    query: str, retmax: int, api_key: str | None = None, email: str | None = None,
+_GENERIC_GEO_TERMS = {
+    "thailand", "northeast thailand", "north east thailand", "northeastern thailand",
+    "southeast asia", "south east asia", "mekong region", "mekong subregion", "asean",
+}
+
+
+def _strip_generic_geo_terms(query: str) -> str:
+    """ตัดคำทั่วไปที่กว้างเกินไป (เช่น "Thailand", "Northeast Thailand") ออกจากกลุ่ม OR ใน
+    query — ถ้ากลุ่มไหนตัดแล้วว่างเปล่า (ทุกตัวเลือกเป็นคำทั่วไปหมด) ให้คงกลุ่มเดิมไว้ (ไม่มี
+    อะไรเฉพาะเจาะจงกว่าให้เลือก) คืน query ที่แคบกว่าเดิม (หรือเดิมถ้าไม่มีอะไรให้ตัด)"""
+
+    def replace_group(m: re.Match) -> str:
+        alts = [a.strip() for a in m.group(1).split(" OR ") if a.strip()]
+        specific = [a for a in alts if a.lower() not in _GENERIC_GEO_TERMS]
+        if not specific or len(specific) == len(alts):
+            return m.group(0)
+        if len(specific) == 1:
+            return specific[0]
+        return "(" + " OR ".join(specific) + ")"
+
+    return re.sub(r"\(([^()]*)\)", replace_group, query)
+
+
+def _progressive_and_search(
+    query: str, retmax: int, api_key: str | None, email: str | None,
 ) -> tuple[list[dict], str]:
     """ค้นด้วย query เต็มก่อน ถ้าไม่พบบทความเลย (0 ผล) ให้ตัด term ท้ายออกทีละตัวแล้วค้นใหม่
     จนกว่าจะพบหรือเหลือ term เดียว — ป้องกัน query ที่ AND หลาย MeSH term มากเกินไป (เช่น
     โรค + ประเด็น + ชื่อประเทศ) จนไม่มีบทความไหนตรงครบทุกเงื่อนไขพร้อมกัน (ผลลัพธ์ 0 บทความ)
-    คืน (articles, query ที่ใช้จริง)
-    """
+    คืน (articles, query ที่ใช้จริง)"""
     terms = [t.strip() for t in re.split(r"\s+AND\s+", query) if t.strip()] or [query]
     for n in range(len(terms), 0, -1):
         attempt = " AND ".join(terms[:n])
@@ -132,60 +176,93 @@ def search_pubmed_progressive(
     return [], query
 
 
+def search_pubmed_progressive(
+    query: str, retmax: int, api_key: str | None = None, email: str | None = None,
+) -> tuple[list[dict], str]:
+    """ค้นสองรอบ: (1) ลองด้วย query ที่ตัดคำทั่วไปกว้างๆ (เช่น "Northeast Thailand") ออกจาก
+    กลุ่ม OR ก่อน — เฉพาะเจาะจงกว่า (เช่น เหลือแค่ชื่อจังหวัด) (2) ถ้าได้บทความไม่ครบ retmax
+    ให้ค้นด้วย query เต็ม (มีคำกว้างๆ ด้วย) เพิ่มเติมเพื่อเติมให้ครบ โดยไม่เอาบทความซ้ำ
+
+    เหตุผล: ถ้าค้นด้วย query เต็มตรงๆ ตั้งแต่แรก PubMed จะถือว่าบทความที่ตรงแค่คำกว้างๆ อย่าง
+    "Northeast Thailand" (มีอยู่เพียบ) เท่ากับบทความที่ตรงชื่อจังหวัดเป๊ะ (มีน้อยกว่ามาก) และ
+    default sort ของ PubMed ไม่ได้ให้น้ำหนักความเฉพาะเจาะจง ทำให้บทความทั่วไปจำนวนมากกลบ
+    บทความเฉพาะเจาะจงจนไม่ถูกดึงมาแสดงเลยทั้งที่มีอยู่จริง — ค้นรอบแคบก่อนแก้ปัญหานี้ตรงๆ
+    คืน (articles, query ที่ใช้จริง — เป็น query แคบถ้ารอบแรกเจอผล)
+    """
+    narrow_query = _strip_generic_geo_terms(query)
+    if narrow_query != query:
+        narrow_articles, narrow_used = _progressive_and_search(narrow_query, retmax, api_key, email)
+        if narrow_articles:
+            if len(narrow_articles) < retmax:
+                seen_pmids = {a.get("pmid") for a in narrow_articles}
+                broad_articles, _ = _progressive_and_search(query, retmax * 3, api_key, email)
+                for a in broad_articles:
+                    if len(narrow_articles) >= retmax:
+                        break
+                    if a.get("pmid") not in seen_pmids:
+                        narrow_articles.append(a)
+                        seen_pmids.add(a.get("pmid"))
+            return narrow_articles, narrow_used
+    return _progressive_and_search(query, retmax, api_key, email)
+
+
 # ── Step 0: Keyword Extractor (Gemini) ──────────────────────────────────────
 
 _KEYWORD_SYSTEM = (
     "You convert a user's natural-language request (often Thai) into an "
-    "English search query for the PubMed biomedical database."
+    "English search query for the PubMed biomedical database.\n"
+    "\n"
+    "Rules:\n"
+    "- Keep the query SHORT: at most 2 concepts joined by AND — the core "
+    "biomedical concept (disease/organism/condition) and, if given, ONE "
+    "geographic-location concept. Do NOT add extra qualifier terms (e.g. "
+    "\"policy\", \"guideline\", \"แนวทาง\", \"มาตรการ\", \"นโยบาย\") as their own "
+    "AND term — PubMed articles rarely use those exact words as indexed "
+    "text, so adding them just causes zero-result searches. Drop them; the "
+    "disease + location terms alone are enough to find relevant literature.\n"
+    "- Never drop a location just because it is a place name — a specific "
+    "province/place IS the geographic concept, not noise.\n"
+    "- If a single specific province/place is named, use it directly. Do "
+    "NOT wrap it with broad fallback terms like \"Thailand\" or \"Northeast "
+    "Thailand\" — that only makes the query longer without adding value.\n"
+    "- PubMed does not understand Thai administrative units. Expand any Thai "
+    "'health region' (เขตสุขภาพ / เขต) into its member PROVINCES joined with "
+    "OR — this still counts as ONE geographic concept. Health Region 10 "
+    "(เขตสุขภาพที่ 10) = Ubon Ratchathani, Sisaket, Yasothon, Amnat Charoen, "
+    "Mukdahan.\n"
+    "- Translate Thai terms to standard English/scientific equivalents. "
+    "Keep scientific names (e.g. Opisthorchis viverrini) unchanged.\n"
+    "- Output ONLY the query string. No quotes, no explanation.\n"
+    "\n"
+    "Examples:\n"
+    "User: Opisthorchis viverrini และ อุบลราชธานี\n"
+    "Query: Opisthorchis viverrini AND Ubon Ratchathani\n"
+    "\n"
+    "User: นโยบายโรคพยาธิใบไม้ตับ จังหวัดอุบลราชธานี\n"
+    "Query: Opisthorchis viverrini AND Ubon Ratchathani\n"
+    "\n"
+    "User: Opisthorchis viverrini เฉพาะเขต 10\n"
+    "Query: Opisthorchis viverrini AND (Ubon Ratchathani OR Sisaket OR Yasothon "
+    "OR Amnat Charoen OR Mukdahan)"
 )
 
-_KEYWORD_PROMPT_TMPL = """จากคำถาม/หัวข้อต่อไปนี้: "{prompt}"
 
-สกัดแนวคิดทางการแพทย์หลัก (โรค/ยา/หัตถการ/อาการ) แล้วแปลงเป็นคำค้นภาษาอังกฤษแบบ MeSH
-สำหรับค้นหาในฐานข้อมูล PubMed
-
-ตอบเป็น JSON เท่านั้น ห้ามมี markdown หรือ ``` :
-{{
-    "query": "คำค้น PubMed ภาษาอังกฤษ กระชับ (อาจรวมหลาย term ด้วย AND/OR)",
-    "keywords": ["term1", "term2"],
-    "reasoning": "เหตุผลที่เลือกคำค้นนี้"
-}}
-
-กฎ:
-- ใช้คำศัพท์ทางการแพทย์มาตรฐาน (MeSH-style) ภาษาอังกฤษเท่านั้นใน query
-- ห้ามใส่ filter ของ PubMed เอง — ใส่แค่คำค้นเนื้อหา
-- CRITICAL: ห้ามใช้ AND เชื่อม term เกิน 2 ตัว — ยิ่งเชื่อม MeSH term หลายตัวด้วย AND
-  ยิ่งเสี่ยงได้ผลลัพธ์ 0 บทความ (ไม่มีบทความไหนตรงครบทุกเงื่อนไขพร้อมกัน) ให้เลือกแค่
-  แนวคิดที่สำคัญที่สุด 1-2 อย่าง (เช่น โรค + ประเด็นหลัก) เท่านั้น
-- ห้ามใส่ชื่อประเทศ/ภูมิภาคเป็น MeSH term บังคับ (เช่น "Thailand"[MeSH]) — งานวิจัย
-  นานาชาติที่ไม่ได้ tag ประเทศไทยไว้ก็ยังเป็นหลักฐานอ้างอิงที่ใช้ได้ การบังคับใส่ประเทศ
-  จะตัดบทความที่เกี่ยวข้องออกไปเกือบหมด
-- ถ้าคำถามไม่เกี่ยวกับการแพทย์ ให้สกัดคำค้นที่เกี่ยวข้องที่สุดเท่าที่ทำได้"""
-
-
-def _extract_json(text: str) -> dict | None:
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except Exception:
-            pass
-    m2 = re.search(r"\{.*\}", text, re.DOTALL)
-    if m2:
-        try:
-            return json.loads(m2.group())
-        except Exception:
-            pass
-    return None
+def _clean_query_output(text: str) -> str:
+    """ทำความสะอาดผลลัพธ์ดิบจาก Gemini — เผื่อโมเดลยังใส่ "Query:" นำหน้า, ครอบด้วย
+    เครื่องหมายคำพูด, หรือมี ``` ติดมา ทั้งที่ system prompt สั่งห้ามไว้แล้ว (defense-in-depth)"""
+    cleaned = text.strip()
+    cleaned = re.sub(r"^```[a-z]*\n?", "", cleaned)
+    cleaned = re.sub(r"\n?```$", "", cleaned).strip()
+    cleaned = re.sub(r"^(Query|PubMed query)\s*:\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip().strip('"').strip("'").strip()
 
 
 def extract_pubmed_query(prompt: str, gemini_key: str) -> dict:
-    """ใช้ Gemini แปลงคำถามไทย/อังกฤษ → English PubMed query. คืน default (ใช้ prompt ตรงๆ) ถ้าพลาด"""
-    default = {"query": prompt, "keywords": [prompt], "reasoning": "ใช้ prompt เดิม (fallback)"}
+    """ใช้ Gemini แปลงคำถามไทย/อังกฤษ → English PubMed query (plain text ล้วน ไม่ใช่ JSON —
+    ดู _KEYWORD_SYSTEM: บังคับรักษาทุก concept ไว้รวมถึงสถานที่ และขยายเขตสุขภาพไทยเป็น
+    รายชื่อจังหวัดสมาชิกด้วย OR แทนการทิ้งชื่อสถานที่ไปเฉยๆ) คืน default (ใช้ prompt ตรงๆ)
+    ถ้าเรียก Gemini ไม่สำเร็จ"""
+    default = {"query": prompt, "keywords": [prompt], "reasoning": ""}
     if not gemini_key:
         return default
     try:
@@ -194,16 +271,14 @@ def extract_pubmed_query(prompt: str, gemini_key: str) -> dict:
             api_key=gemini_key,
             messages=[
                 {"role": "system", "content": _KEYWORD_SYSTEM},
-                {"role": "user", "content": _KEYWORD_PROMPT_TMPL.format(prompt=prompt)},
+                {"role": "user", "content": f"User: {prompt}"},
             ],
             temperature=0.0,
         )
         text = resp.choices[0].message.content or ""
-        data = _extract_json(text)
-        if data and (data.get("query") or "").strip():
-            data.setdefault("keywords", [])
-            data.setdefault("reasoning", "")
-            return data
+        query = _clean_query_output(text)
+        if query:
+            return {"query": query, "keywords": [], "reasoning": ""}
     except Exception as exc:
         log_agent_error(str(exc), agent_name="Keyword Extractor",
                         step="keyword", domain="pubmed", prompt=prompt)
@@ -219,6 +294,7 @@ def _articles_to_text(articles: list[dict]) -> str:
         lines.append(
             f"--- บทความที่ {i} ---\n"
             f"Title:    {a.get('title') or '-'}\n"
+            f"Authors:  {a.get('authors') or '-'}\n"
             f"Journal:  {a.get('journal') or '-'}\n"
             f"PMID:     {a.get('pmid') or '-'}\n"
             f"URL:      {ref}\n"
@@ -296,6 +372,7 @@ def run_pubmed_pipeline(
     if articles:
         for i, article in enumerate(articles, 1):
             title = article.get("title") or "(ไม่มีชื่อเรื่อง)"
+            authors = article.get("authors")
             journal = article.get("journal")
             abstract = article.get("abstract") or "(ไม่มีบทคัดย่อ)"
             pmid = article.get("pmid")
@@ -303,6 +380,8 @@ def run_pubmed_pipeline(
             url = article.get("url")
 
             full_text += f"📄 บทความที่ {i}: {title}\n"
+            if authors:
+                full_text += f"ผู้แต่ง: {authors}\n"
             if journal:
                 full_text += f"วารสาร: {journal}\n"
             if pmid:
