@@ -101,6 +101,9 @@ def _orchestrate(
     session_id: str = "",
     client_history: list[dict[str, Any]] | None = None,
     mode: str = "normal",
+    doc_type: str = "",
+    retry_source: str = "",
+    report_title: str = "",
 ) -> None:
     """Full pipeline entry point — runs in a background thread."""
     def put(ev: dict[str, Any]) -> None:
@@ -441,7 +444,9 @@ def _orchestrate(
             return
 
         # ── Report-Gather mode: รัน thaijo + obsidian + stats แล้วรวมผลสำหรับ wizard ──
-        if mode == "report-gather":
+        # (mode == "report-gather-retry" ใช้ path เดียวกันทุกอย่าง ต่างแค่รัน worker
+        # เดียวแทนที่จะรันทั้ง 5 ตัว — ดูจุดคัดเลือก worker ด้านล่างที่ตัวแปร sources_to_run)
+        if mode in ("report-gather", "report-gather-retry"):
             import concurrent.futures as _cf
             from src.agents.thaijo_agent import (
                 _extract_search_payload,
@@ -452,7 +457,10 @@ def _orchestrate(
             from src.domains import DOMAINS as _DOMAINS
 
             api_key = os.getenv("GEMINI_API_KEY", "")
-            report_title = prompt
+            # ⚠️ ใช้ report_title (ชื่อเรื่องสั้นๆ ที่ผู้ใช้พิมพ์จริง) แยกจาก prompt (query
+            # ที่อาจถูกเสริมด้วยหัวข้อที่เลือกไว้ล่วงหน้าจนยาวมาก) เพื่อไม่ให้ชื่อรายงาน
+            # กลายเป็นก้อนข้อความยาวเฟื้อย — ถ้าไม่ส่ง report_title มาก็ fallback เป็น prompt เดิม
+            report_title = report_title or prompt
 
             # ── Guard: ถามจังหวัดนอกเขตสุขภาพที่ 10 → แจ้งเตือนตรง ๆ ไม่แอบแทนข้อมูล ──
             # ระบบนี้มีข้อมูลเฉพาะ 5 จังหวัดเขต 10 (อุบลฯ ศรีสะเกษ ยโสธร อำนาจเจริญ มุกดาหาร)
@@ -671,27 +679,70 @@ def _orchestrate(
             # ปิด stream ทันทีแบบไม่มี event ใด ๆ ส่งกลับ — ฝั่ง frontend เห็นเป็น
             # "กำลังประมวลผล" ค้างตลอดไป (ไม่มี final/result/error ให้ resolve)
             put({"type": "text_stream_start", "articleCount": 0})
-            with _cf.ThreadPoolExecutor(max_workers=5) as ex:
-                # ⚠️ ทยอยเริ่มแต่ละ worker ห่างกัน ~1.5s แทนที่จะยิง LLM ทั้ง 5 ตัว
-                # พร้อมกันเป๊ะในวินาทีเดียว — ลดโอกาสชน 429 quota-per-minute
-                # (input token) ตอนมีหลาย request วิ่งพร้อมกันอยู่แล้ว โดยแทบไม่
-                # กระทบเวลารวม เพราะยังรันซ้อนกัน (concurrent) อยู่เหมือนเดิม
-                futures = {}
-                for worker, name in (
+
+            # ── สถานะรายแหล่ง (per-source badge) ─────────────────────────────
+            # ให้ frontend โชว์ badge สถานะทั้ง 5 แหล่งแยกกันได้ทันที แทนที่จะรู้
+            # ผลแค่ตอนจบงาน — ป้ายชื่อไทยจับคู่กับ key ที่ worker ใช้ด้านล่าง
+            _SOURCE_LABELS = {
+                "obsidian": "คลังความรู้ (Obsidian)",
+                "stats": "สถิติ",
+                "thaijo": "งานวิจัยไทย (ThaiJo)",
+                "pubmed": "งานวิจัยสากล (PubMed)",
+                "tavily": "ค้นหาเว็บ (Tavily)",
+            }
+            _ALL_WORKERS = {
+                "obsidian": _worker_obsidian,
+                "stats": _worker_stats,
+                "thaijo": _worker_thaijo,
+                "tavily": _worker_tavily,
+                "pubmed": _worker_pubmed,
+            }
+
+            # ── report-gather-retry: ปุ่ม "ลองใหม่" บน badge ที่ status=error ──────
+            # รันเฉพาะแหล่งเดียวที่ขอ แทนที่จะรันทั้ง 5 ตัวใหม่ทั้งชุด (ประหยัดเวลา +
+            # ไม่ยิง LLM ซ้ำกับแหล่งที่สำเร็จแล้ว)
+            if mode == "report-gather-retry":
+                if retry_source not in _ALL_WORKERS:
+                    put({"type": "error", "message": f"ไม่รู้จักแหล่งข้อมูล '{retry_source}'"})
+                    return
+                sources_to_run = [(_ALL_WORKERS[retry_source], retry_source)]
+            else:
+                sources_to_run = [
                     (_worker_obsidian, "obsidian"),
                     (_worker_stats, "stats"),
                     (_worker_thaijo, "thaijo"),
                     (_worker_tavily, "tavily"),
                     (_worker_pubmed, "pubmed"),
-                ):
+                ]
+
+            for _worker_fn, _name in sources_to_run:
+                put({"type": "report_source_status", "source": _name,
+                     "label": _SOURCE_LABELS[_name], "status": "pending"})
+
+            with _cf.ThreadPoolExecutor(max_workers=5) as ex:
+                # ⚠️ ทยอยเริ่มแต่ละ worker ห่างกัน ~1.5s แทนที่จะยิง LLM ทั้ง 5 ตัว
+                # พร้อมกันเป๊ะในวินาทีเดียว — ลดโอกาสชน 429 quota-per-minute
+                # (input token) ตอนมีหลาย request วิ่งพร้อมกันอยู่แล้ว โดยแทบไม่
+                # กระทบเวลารวม เพราะยังรันซ้อนกัน (concurrent) อยู่เหมือนเดิม
+                # (retry เดี่ยว = worker เดียว ไม่ต้องหน่วงเวลากับตัวเอง)
+                futures = {}
+                for worker, name in sources_to_run:
                     futures[ex.submit(worker)] = name
-                    time.sleep(1.5)
+                    put({"type": "report_source_status", "source": name,
+                         "label": _SOURCE_LABELS[name], "status": "running"})
+                    if len(sources_to_run) > 1:
+                        time.sleep(1.5)
                 for fut in _cf.as_completed(futures):
                     name = futures[fut]
                     try:
                         fut.result()
+                        put({"type": "report_source_status", "source": name,
+                             "label": _SOURCE_LABELS[name], "status": "done"})
                     except Exception as exc:
                         put({"type": "agent_done", "step": name, "agentName": name, "result": f"ผิดพลาด: {exc}"})
+                        put({"type": "report_source_status", "source": name,
+                             "label": _SOURCE_LABELS[name], "status": "error",
+                             "message": str(exc)})
 
             # ── รวมผลลัพธ์จากทั้ง 5 แหล่งเป็นรายงานเดียว ──────────────────────────
             sections = []
@@ -749,6 +800,12 @@ def _orchestrate(
                 "articleCount": thaijo_result.get("article_count", 0) + pubmed_result.get("article_count", 0),
                 "reportTitle": report_title,
                 "agentSteps": [],
+                # echo กลับ doc_type ที่ผู้ใช้เลือกไว้ล่วงหน้า (ถ้ามี) — frontend ใช้ข้าม
+                # ขั้นตอนเลือกประเภทเอกสารใน wizard แล้วเริ่มสร้างหัวข้อได้ทันที
+                "docType": doc_type,
+                # บอก frontend ว่านี่คือผลจากปุ่ม "ลองใหม่" ของแหล่งเดียว (ถ้ามี) —
+                # ให้ต่อท้าย section ใหม่เข้ากับเนื้อหาเดิม แทนที่จะแทนที่ทั้งก้อน
+                "retrySource": retry_source or None,
             })
             return
 
@@ -864,7 +921,14 @@ async def _handle_analyze(request: AnalyzeRequest) -> StreamingResponse:
     thread = threading.Thread(
         target=_orchestrate,
         args=(request.prompt, queue, loop),
-        kwargs={"session_id": request.sessionId, "client_history": client_history, "mode": request.mode},
+        kwargs={
+            "session_id": request.sessionId,
+            "client_history": client_history,
+            "mode": request.mode,
+            "doc_type": request.doc_type or "",
+            "retry_source": request.retry_source or "",
+            "report_title": request.report_title or "",
+        },
         daemon=True,
     )
     thread.start()
