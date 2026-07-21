@@ -204,6 +204,30 @@ CSS ที่ต้องใส่ใน <style>:
 ตอบเป็น HTML เท่านั้น เริ่มด้วย <!DOCTYPE html> ห้ามมี text หรือ ``` ก่อนหรือหลัง HTML:"""
 
 
+# แม้พรอมต์จะสั่งให้ LLM ห่อ URL ด้วย <a href> เสมอ แต่เป็น non-deterministic —
+# บางรอบ (โดยเฉพาะรายการ "เอกสารอ้างอิง") LLM กลับเขียนแค่ "URL: https://..." เป็น
+# plain text เฉยๆ ไม่ทำเป็นลิงก์ ทำให้ผู้ใช้กดไม่ได้ทั้งที่ URL ถูกต้อง จึงต้อง
+# post-process บังคับห่อ URL ที่หลุดมาเป็น <a> ทีหลังเสมอ กันพลาดไม่ให้ต้องพึ่งพรอมต์อย่างเดียว
+_BARE_URL_RE = re.compile(r'(?<![="\'])(https?://[^\s<>"\')\]]+)')
+
+
+def _linkify_bare_urls(html: str) -> str:
+    """ห่อ URL ที่หลุดมาเป็น plain text (นอก <a>...</a> ที่มีอยู่แล้ว) ด้วย <a href>"""
+    def linkify_segment(segment: str) -> str:
+        def repl(m: re.Match) -> str:
+            url = m.group(1).rstrip(".,;)]")
+            trail = m.group(1)[len(url):]
+            return f'<a href="{url}" target="_blank" rel="noopener noreferrer">{url}</a>{trail}'
+        return _BARE_URL_RE.sub(repl, segment)
+
+    # แยกส่วนที่เป็น <a>...</a> อยู่แล้วออกไป กัน linkify ซ้อนกันเอง (nested <a> ผิด HTML)
+    parts = re.split(r'(<a\b[^>]*>.*?</a>)', html, flags=re.IGNORECASE | re.DOTALL)
+    return "".join(
+        part if i % 2 == 1 else linkify_segment(part)
+        for i, part in enumerate(parts)
+    )
+
+
 def _fallback_html(query: str, article_count: int, articles: list[dict]) -> str:
     refs = "".join(
         f'<li>{a.get("reference", "-")}</li>'
@@ -929,6 +953,7 @@ def run_thaijo_report_pipeline(
     if full_html.startswith("```"):
         full_html = re.sub(r"^```[a-z]*\n?", "", full_html)
         full_html = re.sub(r"\n?```$", "", full_html).strip()
+    full_html = _linkify_bare_urls(full_html)
     if not full_html or "<html" not in full_html:
         full_html = _fallback_html(query, article_count, [])
         put({"type": "generator_chunk", "html": full_html})

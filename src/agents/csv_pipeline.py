@@ -8,7 +8,7 @@ from typing import Any
 from crewai import Agent, Crew, LLM, Task
 
 from src.domains import Domain
-from src.history import append_history
+from src.history import append_history, get_verified_file_ids, mark_file_verified
 from src.agents.text_utils import dedupe_repeated_answer
 from src.agents.prompt_profile import (
     ANALYST_CORE_POLICY,
@@ -95,7 +95,11 @@ def _resolve_folders_to_files(
 # ── LLM ──────────────────────────────────────────────────────────────────────
 
 def _get_llm() -> LLM:
-    return LLM(model="gemini/gemini-2.5-flash-lite", api_key=os.getenv("GEMINI_API_KEY"))
+    # temperature=0.1: ทุก agent ใน pipeline นี้ (folder nav / relevance verifier /
+    # schema / code-gen / insight) ต้องการความสม่ำเสมอมากกว่าความหลากหลายทางภาษา —
+    # ค่า default (ไม่ล็อก) ทำให้ folder-selection และ relevance-verifier ตอบไม่ตรงกัน
+    # ระหว่างรอบ แม้คำถามและ context จะเหมือนเดิมทุกตัวอักษร (ดู _verify_file_relevance)
+    return LLM(model="gemini/gemini-2.5-flash-lite", api_key=os.getenv("GEMINI_API_KEY"), temperature=0.1)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -225,10 +229,11 @@ def _verify_file_relevance(prompt: str, selected_lines: list[str], llm) -> bool:
             "คำเดียว: yes หรือ no",
         )
 
-    # ⚠️ การเรียก LLM ครั้งเดียวไม่ deterministic (temperature ไม่ได้ล็อกเป็น 0) —
-    # ตอบ "no" ผิดพลาดแค่ครั้งเดียวจะทิ้งข้อมูลทั้งโดเมนทันที ทั้งที่เกณฑ์ข้างต้นบอกไว้ชัดว่า
-    # "ให้ค่าเริ่มต้นเอนไปทาง yes" — ถามซ้ำสูงสุด 2 ครั้ง ผ่านถ้าครั้งใดครั้งหนึ่งตอบ yes
-    # (ลด false-reject ที่ทำให้ผู้ใช้เจอ "ไม่พบข้อมูล" ทั้งที่ไฟล์ตรงหัวข้ออยู่แล้ว)
+    # ⚠️ แม้ตอนนี้ล็อก temperature=0.1 แล้ว (ดู _get_llm) ก็ยังไม่ใช่ 0 เป๊ะ — โอกาสตอบ
+    # ไม่ตรงกันระหว่างรอบยังมีอยู่เล็กน้อย ตอบ "no" ผิดพลาดแค่ครั้งเดียวจะทิ้งข้อมูลทั้งโดเมน
+    # ทันที ทั้งที่เกณฑ์ข้างต้นบอกไว้ชัดว่า "ให้ค่าเริ่มต้นเอนไปทาง yes" — ถามซ้ำสูงสุด 2
+    # ครั้ง ผ่านถ้าครั้งใดครั้งหนึ่งตอบ yes (ลด false-reject ที่ทำให้ผู้ใช้เจอ "ไม่พบข้อมูล"
+    # ทั้งที่ไฟล์ตรงหัวข้ออยู่แล้ว) — เป็น safety net ชั้นสอง ไม่ใช่ตัวแก้ปัญหาหลักอีกต่อไป
     for _attempt in range(2):
         result = _ask_once()
         r = result.strip().lower()
@@ -678,13 +683,15 @@ def run_pipeline(
     # File Finder คืน top-N เสมอ (แม้ไม่มีคำตรง) → ต้องกัน CSV มั่ว ๆ มาตอบ
     # ถ้าไม่ตรง ให้แจ้ง "ไม่พบข้อมูล + แจ้ง admin" แทนการเอาข้อมูลอื่นมาตอบ
     #
-    # ⚠️ รันเฉพาะ "คำถามแรก" (ไม่มี history) เท่านั้น — เพราะ verifier ตัดสินจากชื่อไฟล์
-    # ล้วน ๆ จึงไวต่อความเจาะจงของ follow-up (เช่น "...รายอำเภอ", "...จังหวัดอุบล")
-    # แล้วปฏิเสธไฟล์ที่ "หัวข้อตรง" ทั้งที่เทิร์นก่อนใช้ไฟล์นี้ตอบไปแล้ว (false-negative
-    # ที่จูน prompt เท่าไรก็ไม่หาย) สำหรับ follow-up หัวข้อถูก validate ไปแล้วในเทิร์นแรก
-    # + context-aware router คุม domain ต่อเนื่อง จึงข้าม gate ได้ปลอดภัย
-    # (เคสจับไฟล์ผิด เช่น พยาธิใบไม้→เบาหวาน เป็นคำถามแรกเสมอ → ยังถูก gate จับ)
-    _run_relevance_gate = not (history_context or "").strip()
+    # ⚠️ เดิมเคยข้าม gate ทั้งหมดเมื่อ "มี history" (ไม่ว่า history นั้นเกี่ยวข้องกับ
+    # file_id ที่เพิ่ง resolve มาหรือไม่) — ทำให้คำถามที่ 2 ขึ้นไปในเซสชันเดียวกัน ถ้า
+    # File Finder สุ่มได้ไฟล์คนละโดเมนกับที่เคยตอบ (เช่น พยาธิใบไม้ตับ → ไฟล์รอบเอว)
+    # จะไม่มีด่านใดจับไว้เลย จึงเปลี่ยนมาเช็คเป็นรายไฟล์แทน: gate จะถูกข้ามเฉพาะ
+    # file_id ที่ "เคยผ่าน gate นี้มาแล้วในเซสชันนี้" (เก็บใน Redis ผ่าน
+    # get_verified_file_ids/mark_file_verified) ส่วน follow-up ที่ใช้ไฟล์เดิมจริง ๆ
+    # ("...รายอำเภอ", "...จังหวัดอุบล") ยังข้าม gate ได้ตามเดิมเพราะ file_id ไม่เปลี่ยน
+    verified_files = get_verified_file_ids(session_id) if session_id else set()
+    _run_relevance_gate = resolved_file_id not in verified_files
     if resolved_file_id and _run_relevance_gate and not _verify_file_relevance(prompt, [ln for _, ln in selected], llm):
         put({"type": "agent_done", "step": "file_finder", "agentName": "File Finder Agent",
              "result": f"พบไฟล์ใกล้เคียงแต่ไม่ตรงหัวข้อคำถาม — ถือว่าไม่มีข้อมูล\n{file_result}"})
@@ -707,6 +714,9 @@ def run_pipeline(
             ],
         })
         return
+
+    if session_id and resolved_file_id:
+        mark_file_verified(session_id, resolved_file_id)
 
     put({"type": "agent_done", "step": "file_finder", "agentName": "File Finder Agent", "result": file_result})
 

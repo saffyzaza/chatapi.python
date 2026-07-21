@@ -56,3 +56,27 @@ def build_history_context(history: list[dict[str, Any]]) -> str:
         role_label = "ผู้ใช้" if msg.get("role") == "user" else "AI"
         lines.append(f"{role_label}: {msg.get('text', '').strip()}")
     return "ประวัติการสนทนาก่อนหน้า:\n" + "\n".join(lines)
+
+
+def get_verified_file_ids(session_id: str) -> set[str]:
+    """file_id ทั้งหมดที่เคยผ่าน relevance gate แล้วในเซสชันนี้ (ข้าม gate ซ้ำได้)."""
+    if not session_id:
+        return set()
+    try:
+        data = _get_redis().get(f"session:{session_id}:verified_files")
+        return set(json.loads(data)) if data else set()
+    except Exception:
+        logger.warning("Redis unavailable — returning empty verified-file set")
+        return set()
+
+
+def mark_file_verified(session_id: str, file_id: str) -> None:
+    if not session_id or not file_id:
+        return
+    try:
+        r = _get_redis()
+        verified = get_verified_file_ids(session_id)
+        verified.add(file_id)
+        r.set(f"session:{session_id}:verified_files", json.dumps(list(verified)), ex=_TTL_SECONDS)
+    except Exception:
+        logger.warning("Redis unavailable — verified file not saved")

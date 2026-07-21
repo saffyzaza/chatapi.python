@@ -17,6 +17,7 @@ from src.agents.router import route_domain, route_with_web_search, route_multi_d
 from src.agents.csv_pipeline import run_pipeline
 from src.agents.multi_csv_pipeline import run_multi_pipeline
 from src.agents.thaijo_agent import run_thaijo_pipeline
+from src.config import get_settings
 from src.history import get_history, append_history, build_history_context
 from src.schemas.analyze import AnalyzeRequest
 from src.tools.vault_rag import detect_province_from_prompt, read_vault_context, get_vault_summary
@@ -48,6 +49,40 @@ def _tavily_raw_to_articles_text(raw_data: str) -> str:
     if not urls:
         return ""
     lines = [f"--- แหล่งข้อมูลเว็บที่ {i} ---\nURL: {url}" for i, url in enumerate(urls, 1)]
+    return "\n\n".join(lines)
+
+
+def _obsidian_notes_to_articles_text(notes: list) -> str:
+    """แปลง notes_referenced ของ Obsidian (พร้อม pdf_url ที่ dedupe ต่อเอกสารแล้ว —
+    ดู obsidian_fullcontext.py) เป็นบล็อกแยกต่อเอกสารแบบเดียวกับ ThaiJo/PubMed
+    articles_text ("--- ... ที่ N ---\\n...\\nURL: ...") เพื่อให้ Report Generator
+    (LLM) เห็นแล้วใส่ URL ของเอกสารในคลังความรู้ลงในส่วน "เอกสารอ้างอิง" ของรายงาน
+    ฉบับจริงด้วย — ก่อนหน้านี้ obsidian_result เก็บแค่ .content (เนื้อหาคำตอบ) ไม่เคย
+    ส่ง notes_referenced ต่อมาที่นี่เลย ทำให้เอกสารในคลังความรู้ไม่มี URL ติดไปกับ
+    รายงานที่สร้างขึ้น ต่างจาก ThaiJo/PubMed/Tavily ที่มี URL ครบ
+
+    ⚠️ ต้องแปลง pdf_url (path สัมพัทธ์ เช่น "/api/pdf/view/815316") ให้เป็น absolute
+    URL เต็มรูปแบบก่อนฝังลงข้อความ — เคยลองส่ง path สัมพัทธ์ตรง ๆ แล้วพบว่า Report
+    Generator (LLM) เขียนออกมาเป็นข้อความธรรมดา ("URL: /api/pdf/view/815316") ไม่ทำ
+    เป็นลิงก์ <a href> ให้ ในขณะที่ URL เต็มของ ThaiJo/PubMed (https://...) ถูกทำเป็น
+    ลิงก์คลิกได้ถูกต้อง — ต่างจากฝั่งแชท (LeftPane.tsx) ที่ path สัมพัทธ์ใน <a href>
+    ของ React ทำงานได้ปกติอยู่แล้ว จึงต้องแก้เฉพาะจุดนี้ ไม่ใช่แก้ pdf_url ต้นทาง
+    """
+    if not notes:
+        return ""
+    base_url = get_settings().PUBLIC_APP_URL.rstrip("/")
+    lines = []
+    for i, n in enumerate(notes, 1):
+        title = getattr(n, "title", None) or getattr(n, "note_id", "")
+        province = getattr(n, "province", None)
+        pdf_url = getattr(n, "pdf_url", None)
+        full_url = f"{base_url}{pdf_url}" if pdf_url else None
+        lines.append(
+            f"--- เอกสารคลังความรู้ที่ {i} ---\n"
+            f"ชื่อเอกสาร: {title}\n"
+            f"จังหวัด:   {province or '-'}\n"
+            f"URL:       {full_url or '-'}"
+        )
     return "\n\n".join(lines)
 
 
@@ -421,6 +456,9 @@ def _orchestrate(
             put({"type": "agent_start", "step": "obsidian_search", "agentName": "Obsidian Knowledge Searcher"})
             from src.agents.obsidian_fullcontext import run_obsidian_ask_fullcontext
             import concurrent.futures
+            # สตรีมคำตอบสด ๆ ผ่าน "obsidian_chunk" ระหว่างที่ Gemini กำลังเขียน —
+            # ลด perceived latency ของคำถามที่กิน ~50-60s (เดิมรอก้อนเดียวจบเงียบ ๆ)
+            put({"type": "obsidian_stream_start", "step": "obsidian_search"})
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 obs_result = ex.submit(
                     run_obsidian_ask_fullcontext,
@@ -432,6 +470,7 @@ def _orchestrate(
                     detect_province_from_prompt(prompt) or "",
                     "health_region_10",
                     history_context=history_context,
+                    on_delta=lambda t: put({"type": "obsidian_chunk", "step": "obsidian_search", "text": t}),
                 ).result()
             put({"type": "agent_done", "step": "obsidian_search", "agentName": "Obsidian Knowledge Searcher",
                  "result": f"พบ {len(obs_result.notes_referenced)} notes"})
@@ -561,6 +600,7 @@ def _orchestrate(
                      "result": f"พบ {len(obs.notes_referenced)} notes ในคลังความรู้",
                      "reasoning": obs.content[:400] if obs.content else "ไม่พบข้อมูลในคลังความรู้"})
                 obsidian_result["content"] = obs.content
+                obsidian_result["notes"] = obs.notes_referenced
 
             # ── Stats worker — forward events real-time ผ่าน wrapper queue ────
             stats_final_holder: dict = {}
@@ -773,7 +813,17 @@ def _orchestrate(
             # เนื้อหา+แหล่งอ้างอิงจาก Tavily Research เลย ทำให้ "อ้างอิงของ research
             # ไม่ถูกนำไปทำอ้างอิงในรายงาน" — ต้องแนบเนื้อหา Tavily (ซึ่งมี "แหล่งอ้างอิง"
             # ต่อท้ายอยู่แล้ว) เข้าไปด้วย เพื่อให้แหล่งอ้างอิงไหลต่อเข้ารายงานฉบับจริง
+            # ⚠️ เช่นเดียวกัน ต้องแนบ notes_referenced (พร้อม pdf_url) ของ Obsidian เข้าไป
+            # ด้วย — เดิมมีแต่ .content (เนื้อหาคำตอบ) ไหลเข้า combined_text อย่างเดียว
+            # ไม่เคยส่ง URL ของเอกสารในคลังความรู้ต่อมาให้ Report Generator เห็นเลย
             report_source_parts = []
+            if obsidian_result.get("notes"):
+                obsidian_articles_text = _obsidian_notes_to_articles_text(obsidian_result["notes"])
+                if obsidian_articles_text:
+                    report_source_parts.append(
+                        "--- เอกสารนโยบายจากคลังความรู้ (Obsidian Knowledge Vault) ---\n"
+                        + obsidian_articles_text
+                    )
             if thaijo_result.get("articles_text"):
                 report_source_parts.append(thaijo_result["articles_text"])
             if pubmed_result.get("articles_text"):
@@ -832,15 +882,20 @@ def _orchestrate(
         # ── Accident domain in normal mode → redirect to Obsidian ──────────
         # ผู้ใช้ไม่ได้เลือก stats tool → ไม่ควรใช้ Accident SQL Agent
         # ให้ตอบจาก Obsidian Knowledge Vault แทน (มีข้อมูลนโยบายอุบัติเหตุ)
+        accident_redirected_to_obsidian = False
         if domain.code == "d1":
             from src.agents.router import DOMAINS as _ROUTER_DOMAINS
             domain = domains[0] = _ROUTER_DOMAINS.get("obsidian", domain)
+            accident_redirected_to_obsidian = True
 
         # ── Obsidian Knowledge Vault pipeline ────────────────────────────────
         if domain.code == "obsidian":
             put({"type": "agent_start", "step": "obsidian_search", "agentName": "Obsidian Knowledge Searcher"})
             from src.agents.obsidian_fullcontext import run_obsidian_ask_fullcontext
             import concurrent.futures
+            # สตรีมคำตอบสด ๆ ผ่าน "obsidian_chunk" ระหว่างที่ Gemini กำลังเขียน —
+            # ลด perceived latency ของคำถามที่กิน ~50-60s (เดิมรอก้อนเดียวจบเงียบ ๆ)
+            put({"type": "obsidian_stream_start", "step": "obsidian_search"})
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 obs_result = ex.submit(
                     run_obsidian_ask_fullcontext,
@@ -850,7 +905,18 @@ def _orchestrate(
                     detect_province_from_prompt(prompt) or "",
                     "health_region_10",
                     history_context=history_context,
+                    on_delta=lambda t: put({"type": "obsidian_chunk", "step": "obsidian_search", "text": t}),
                 ).result()
+            # ── UX nudge: เตือนผู้ใช้ว่าตัวเลขนี้มาจากรายงานในคลังความรู้ (นิ่ง,
+            # ไม่ใช่ query สดจาก DB) เพราะคำถามอุบัติเหตุที่ไม่ได้กดปุ่ม "สถิติ" จะ
+            # ไม่มีทางแตะ Accident SQL Agent เลย — ผู้ใช้ทั่วไปจะไม่รู้ถ้าไม่บอกตรงๆ
+            if accident_redirected_to_obsidian:
+                notice = (
+                    "> 💡 **หมายเหตุ:** คำตอบนี้อ้างอิงจากรายงานที่บันทึกไว้ในคลังความรู้ "
+                    "(อาจไม่ใช่ตัวเลขล่าสุดแบบเรียลไทม์) หากต้องการสถิติอุบัติเหตุที่แม่นยำ"
+                    "และเป็นปัจจุบันจากฐานข้อมูล ให้กดปุ่ม **\"สถิติ\"** แล้วถามคำถามเดิมอีกครั้ง\n\n"
+                )
+                obs_result.content = notice + obs_result.content
             put({"type": "agent_done", "step": "obsidian_search", "agentName": "Obsidian Knowledge Searcher",
                  "result": f"พบ {len(obs_result.notes_referenced)} notes"})
             if session_id:

@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     # CORS
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # ต้องตรงกับ NEXT_PUBLIC_APP_URL ฝั่ง frontend — ใช้แปลง path สัมพัทธ์ (เช่น
+    # "/api/pdf/view/123") ให้เป็น absolute URL เต็มรูปแบบ เฉพาะตอนที่ต้องฝัง URL
+    # ลงในข้อความที่ป้อนให้ LLM อ่าน (เช่น เอกสารอ้างอิงในรายงานที่สร้างอัตโนมัติ)
+    # เพราะ LLM มักไม่ทำ path สัมพัทธ์ให้เป็นลิงก์คลิกได้ในเอกสาร HTML ที่มันเขียนเอง
+    # (ต่างจากฝั่ง React ที่ path สัมพัทธ์ใน <a href> ทำงานได้ปกติอยู่แล้ว)
+    PUBLIC_APP_URL: str = "http://localhost:3000"
+
     # Obsidian / PDF Ingest
     OBSIDIAN_VAULT_PATH: str = "/obsidian_vault/musya knowlads"
     PDF_INGEST_PAGES_PER_CHUNK: int = 20  # หน้าต่อ chunk (เพิ่มจาก 10 → 20 ลด API calls)

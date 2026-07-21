@@ -19,3 +19,6 @@ openpyxl
 xlrd
 python-multipart
 markdown
+
+# ── Test tooling ─────────────────────────────────────────────────────────────
+pytest>=8.0.0
